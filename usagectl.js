@@ -25,16 +25,20 @@ module.exports.usagectl = function (parent) {
     obj.exports = [];
 
     function getPowerTimeline(nodeId, oldestTime, cb) {
-        // On bypass db.getPowerTimeline (signature incompatible avec ce MC
-        // sur driver mongo 4+ qui retourne des promises) et on query la
-        // collection eventsfile directement.
+        // Power events stockés dans db.powerfile (collection 'power' séparée
+        // de 'events'). Query directe pour éviter db.getPowerTimeline qui
+        // crash MC dans ce setup.
         try {
             const db = obj.meshServer && obj.meshServer.db;
-            if (!db || !db.eventsfile || typeof db.eventsfile.find !== 'function') {
-                return cb(new Error('db.eventsfile indisponible'), []);
+            const coll = db && (db.powerfile || db.eventsfile);
+            if (!coll || typeof coll.find !== 'function') {
+                return cb(new Error('db.powerfile indisponible'), []);
             }
-            const q = { etype: 'power', nodeid: nodeId, time: { $gte: new Date(oldestTime) } };
-            const cur = db.eventsfile.find(q);
+            // Schéma typique d'un power event MC : { nodeid, time, power }
+            // Le filtre time est un nombre (timestamp ms), pas un Date — à
+            // confirmer via debug si besoin.
+            const q = { nodeid: nodeId, time: { $gte: oldestTime } };
+            const cur = coll.find(q);
             // Tri par time croissant si l'API le permet.
             const sorted = (typeof cur.sort === 'function') ? cur.sort({ time: 1 }) : cur;
             const toArr = sorted.toArray();
@@ -59,10 +63,16 @@ module.exports.usagectl = function (parent) {
         let on = 0;
         let curState = null;
         let curStart = start;
-        // events triés par time croissant
+        // Trie défensif au cas où la collection n'est pas pré-triée.
+        events.sort(function (a, b) {
+            const ta = (a.time instanceof Date) ? a.time.getTime() : Number(a.time);
+            const tb = (b.time instanceof Date) ? b.time.getTime() : Number(b.time);
+            return ta - tb;
+        });
         for (let i = 0; i < events.length; i++) {
             const e = events[i];
             const t = (e.time instanceof Date) ? e.time.getTime() : Number(e.time);
+            // MC utilise généralement `power` (0=off, 1=on, 2=alert, etc.)
             const p = (e.power !== undefined) ? Number(e.power) : Number(e.p);
             if (isNaN(t) || isNaN(p)) continue;
             if (t < start) { curState = p; continue; }
@@ -97,13 +107,13 @@ module.exports.usagectl = function (parent) {
             const info = { dbType: db.databaseType };
             if (!nodeId) return sendJson(res, 200, info);
             // Plusieurs queries pour identifier le bon schéma.
+            info.hasPowerfile = !!(db && db.powerfile);
+            const coll = db.powerfile || db.eventsfile;
             const queries = [
-                { label: 'etype=power (any node, limit 3)', q: { etype: 'power' }, limit: 3 },
-                { label: 'power field exists (any, limit 3)', q: { power: { $exists: true } }, limit: 3 },
-                { label: 'any event with this nodeid', q: { nodeid: nodeId }, limit: 3 },
-                { label: 'any event nodeid alt: nid', q: { nid: nodeId }, limit: 3 },
-                { label: 'any event nodeid alt: nodeId', q: { nodeId: nodeId }, limit: 3 },
-                { label: 'any event sample (any field, limit 5)', q: {}, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile sample', q: {}, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile nodeid=X', q: { nodeid: nodeId }, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(ms)', q: { nodeid: nodeId, time: { $gte: oldest } }, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(date)', q: { nodeid: nodeId, time: { $gte: new Date(oldest) } }, limit: 5 },
             ];
             info.tries = [];
             let qi = 0;
@@ -111,7 +121,9 @@ module.exports.usagectl = function (parent) {
                 if (qi >= queries.length) return sendJson(res, 200, info);
                 const t = queries[qi++];
                 try {
-                    let cur = db.eventsfile.find(t.q);
+                    const targetColl = (t.coll === 'powerfile' ? db.powerfile : db.eventsfile);
+                    if (!targetColl) { info.tries.push({ label: t.label, error: 'collection absente' }); return nextQ(); }
+                    let cur = targetColl.find(t.q);
                     if (t.limit && typeof cur.limit === 'function') cur = cur.limit(t.limit);
                     const arr = cur.toArray();
                     if (arr && typeof arr.then === 'function') {
