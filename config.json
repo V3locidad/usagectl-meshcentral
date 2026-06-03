@@ -1,0 +1,14 @@
+{
+  "name": "usagectl",
+  "shortName": "usagectl",
+  "version": "0.0.1",
+  "author": "V3locidad",
+  "description": "Taux d'occupation par salle et par poste sur les 7 derniers jours, basé sur la power timeline MeshCentral.",
+  "hasAdminPanel": true,
+  "homepage": "https://github.com/V3locidad/usagectl-meshcentral",
+  "changelogUrl": "https://raw.githubusercontent.com/V3locidad/usagectl-meshcentral/main/changelog.md",
+  "configUrl": "https://raw.githubusercontent.com/V3locidad/usagectl-meshcentral/main/config.json",
+  "downloadUrl": "https://github.com/V3locidad/usagectl-meshcentral/archive/refs/heads/main.zip",
+  "repository": { "type": "git", "url": "https://github.com/V3locidad/usagectl-meshcentral.git" },
+  "meshCentralCompat": ">=1.1.0"
+}

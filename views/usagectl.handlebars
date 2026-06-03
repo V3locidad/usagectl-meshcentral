@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>usagectl</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 10px; font-size: 13px; }
+  h2 { margin: 0 0 8px 0; }
+  .pill { display: inline-block; padding: 1px 8px; font-size: 11px; background: #e6e6e6; border-radius: 9px; vertical-align: middle; }
+  .bar { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid #ddd; margin-bottom: 8px; }
+  button { padding: 3px 10px; border: 1px solid #cfd5db; background: #f6f8fa; border-radius: 3px; cursor: pointer; font-size: 12px; }
+  button.primary { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+  button.back { background: #fff; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px; border-bottom: 1px solid #f0f0f0; text-align: left; }
+  th { background: #fafafa; font-size: 12px; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: #f8f8ff; }
+  .occBar { height: 14px; background: #e0e0e0; border-radius: 3px; position: relative; overflow: hidden; min-width: 120px; }
+  .occBar > span { display: block; height: 100%; background: linear-gradient(90deg, #2ecc40, #2ecc40 50%, #f39c12 70%, #c0392b 100%); }
+  .lvl0 > span { background: #d9534f; }
+  .lvl1 > span { background: #f39c12; }
+  .lvl2 > span { background: #2ecc40; }
+  .lvl3 > span { background: #2ecc40; }
+  .occLabel { font-weight: bold; }
+  .empty { padding: 20px; text-align: center; color: #999; }
+  .hdr { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .hdr h3 { margin: 0; flex: 1; }
+</style>
+</head>
+<body>
+
+<h2>Taux d'occupation <span id="cfgState" class="pill">prêt</span></h2>
+
+<div class="bar">
+  <span>Période :</span>
+  <select id="daysSel">
+    <option value="7" selected>7 derniers jours</option>
+    <option value="14">14 derniers jours</option>
+    <option value="30">30 derniers jours</option>
+  </select>
+  <span style="color:#666;font-size:11px">Basé sur la power timeline (poste en ligne / sous tension)</span>
+  <span style="flex:1"></span>
+  <button id="refreshBtn" class="primary">↻ Rafraîchir</button>
+</div>
+
+<div id="content"><div class="empty">Chargement…</div></div>
+
+<script>
+  function $(id) { return document.getElementById(id); }
+  function api(action, params) {
+    var qs = 'action=' + encodeURIComponent(action);
+    if (params) Object.keys(params).forEach(function (k) { qs += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); });
+    return fetch('/pluginadmin.ashx?pin=usagectl&' + qs, { credentials: 'include' }).then(function (r) { return r.json(); });
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  function occBar(pct) {
+    var p = Math.max(0, Math.min(100, pct || 0));
+    // Niveau visuel
+    var lvl = (p < 10) ? 0 : (p < 30) ? 1 : (p < 60) ? 2 : 3;
+    return '<div class="occBar lvl' + lvl + '"><span style="width:' + p.toFixed(1) + '%"></span></div>';
+  }
+
+  var currentView = 'salles';
+
+  function loadSalles() {
+    currentView = 'salles';
+    $('content').innerHTML = '<div class="empty">Calcul en cours… (peut prendre 5-30s selon le nombre de postes)</div>';
+    var days = $('daysSel').value;
+    api('salles', { days: days }).then(function (r) {
+      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
+      var salles = r.salles || [];
+      if (!salles.length) { $('content').innerHTML = '<div class="empty">Aucune salle.</div>'; return; }
+      var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + r.days + ' jours</h3></div>'
+               + '<table><thead><tr>'
+               + '<th>Salle</th>'
+               + '<th style="width:80px">Postes</th>'
+               + '<th style="width:200px">Taux d\'occupation moyen</th>'
+               + '<th style="width:120px">%</th>'
+               + '<th style="width:140px">Heures/jour/poste</th>'
+               + '</tr></thead><tbody>';
+      salles.forEach(function (s) {
+        html += '<tr class="clickable" data-meshid="' + escapeHtml(s.meshid) + '">'
+              + '<td>' + escapeHtml(s.name) + '</td>'
+              + '<td>' + s.nodes + '</td>'
+              + '<td>' + occBar(s.avgOnPct) + '</td>'
+              + '<td class="occLabel">' + s.avgOnPct + ' %</td>'
+              + '<td>' + s.avgOnHoursPerDay + ' h</td>'
+              + '</tr>';
+      });
+      html += '</tbody></table>';
+      $('content').innerHTML = html;
+      Array.prototype.forEach.call($('content').querySelectorAll('tr.clickable'), function (tr) {
+        tr.onclick = function () { loadSalleDetail(tr.getAttribute('data-meshid')); };
+      });
+    });
+  }
+
+  function loadSalleDetail(meshid) {
+    currentView = 'salle';
+    $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
+    var days = $('daysSel').value;
+    api('salleDetail', { meshid: meshid, days: days }).then(function (r) {
+      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
+      var nodes = r.nodes || [];
+      var html = '<div class="hdr">'
+               + '<button class="back" id="backBtn">← Retour</button>'
+               + '<h3>Postes — sur ' + r.days + ' jours</h3>'
+               + '</div>';
+      if (!nodes.length) html += '<div class="empty">Aucun poste.</div>';
+      else {
+        html += '<table><thead><tr>'
+              + '<th>Poste</th>'
+              + '<th>OS</th>'
+              + '<th style="width:200px">Taux d\'occupation</th>'
+              + '<th style="width:120px">%</th>'
+              + '<th style="width:140px">Heures/jour</th>'
+              + '</tr></thead><tbody>';
+        nodes.forEach(function (n) {
+          html += '<tr>'
+                + '<td>' + escapeHtml(n.name) + '</td>'
+                + '<td style="font-size:11px;color:#666">' + escapeHtml(n.os) + '</td>'
+                + '<td>' + occBar(n.onPct) + '</td>'
+                + '<td class="occLabel">' + n.onPct + ' %</td>'
+                + '<td>' + n.onHoursPerDay + ' h</td>'
+                + '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+      $('content').innerHTML = html;
+      $('backBtn').onclick = loadSalles;
+    });
+  }
+
+  $('refreshBtn').onclick = function () { if (currentView === 'salles') loadSalles(); };
+  $('daysSel').onchange = function () { if (currentView === 'salles') loadSalles(); };
+  loadSalles();
+</script>
+</body>
+</html>
