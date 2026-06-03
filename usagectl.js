@@ -24,19 +24,16 @@ module.exports.usagectl = function (parent) {
     obj.meshServer = parent.parent;
     obj.exports = [];
 
-    // Lit la timeline d'un seul node : essaie d'abord l'API native MC
-    // (db.GetPowerTimelineByNode si elle existe), sinon fallback sur une
-    // query directe des events.
     function getPowerTimeline(nodeId, oldestTime, cb) {
-        const db = obj.meshServer.db;
-        // MC expose getPowerTimeline(nodeid, oldestTime, lastSampleTime, func).
-        if (typeof db.getPowerTimeline === 'function') {
+        try {
+            const db = obj.meshServer && obj.meshServer.db;
+            if (!db || typeof db.getPowerTimeline !== 'function') return cb(new Error('db.getPowerTimeline indisponible'), []);
             db.getPowerTimeline(nodeId, oldestTime, Date.now(), function (err, docs) {
-                cb(err, docs || []);
+                try { cb(err, docs || []); } catch (e) { /* avale, ne crash pas MC */ }
             });
-            return;
+        } catch (e) {
+            try { cb(e, []); } catch (_) {}
         }
-        cb(new Error('db.getPowerTimeline indisponible'), []);
     }
 
     // Calcule la durée (ms) passée à power=1 dans [start, end] à partir d'une
@@ -62,6 +59,13 @@ module.exports.usagectl = function (parent) {
     }
 
     obj.handleAdminReq = function (req, res, user) {
+        try {
+            return _handleAdminReq(req, res, user);
+        } catch (e) {
+            try { sendJson(res, 500, { error: 'usagectl: ' + (e && e.message) }); } catch (_) {}
+        }
+    };
+    function _handleAdminReq(req, res, user) {
         const action = String((req.query && req.query.action) || '');
         if (!action) return res.render(path.join(__dirname, 'views/usagectl'), { user: user });
 
@@ -214,7 +218,7 @@ module.exports.usagectl = function (parent) {
         }
 
         return sendJson(res, 404, { error: 'action inconnue: ' + action });
-    };
+    }
 
     return obj;
 };
