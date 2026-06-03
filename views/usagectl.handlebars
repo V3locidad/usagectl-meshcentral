@@ -137,9 +137,9 @@
     });
   }
 
-  $('refreshBtn').onclick = function () { if (currentView === 'salles') loadSalles(); };
-  $('daysSel').onchange = function () { if (currentView === 'salles') loadSalles(); };
-  loadSalles();
+  $('refreshBtn').onclick = function () { loadSalles(); };
+  $('daysSel').onchange = function () { /* l'utilisateur cliquera Calculer */ };
+  $('content').innerHTML = '<div class="empty">Choisis la période et clique <b>↻ Rafraîchir</b> pour calculer.<br><br>Sur 356 postes, le calcul prend 30-90s (séquentiel pour ne pas saturer MC).</div>';
 </script>
 </body>
 </html>
