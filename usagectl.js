@@ -96,12 +96,40 @@ module.exports.usagectl = function (parent) {
             const oldest = Date.now() - 7 * 86400000;
             const info = { dbType: db.databaseType };
             if (!nodeId) return sendJson(res, 200, info);
-            getPowerTimeline(nodeId, oldest, function (err, docs) {
-                info.err = err && err.message;
-                info.count = (docs || []).length;
-                info.sample = (docs || []).slice(0, 10);
-                sendJson(res, 200, info);
-            });
+            // Plusieurs queries pour identifier le bon schéma.
+            const queries = [
+                { label: 'etype=power + nodeid + time>=date', q: { etype: 'power', nodeid: nodeId, time: { $gte: new Date(oldest) } } },
+                { label: 'etype=power + nodeid (no time filter)', q: { etype: 'power', nodeid: nodeId } },
+                { label: 'nodeid + power exists (no etype)', q: { nodeid: nodeId, power: { $exists: true } } },
+                { label: 'nodeid only (any event, limit 5)', q: { nodeid: nodeId }, limit: 5 },
+            ];
+            info.tries = [];
+            let qi = 0;
+            function nextQ() {
+                if (qi >= queries.length) return sendJson(res, 200, info);
+                const t = queries[qi++];
+                try {
+                    let cur = db.eventsfile.find(t.q);
+                    if (t.limit && typeof cur.limit === 'function') cur = cur.limit(t.limit);
+                    const arr = cur.toArray();
+                    if (arr && typeof arr.then === 'function') {
+                        arr.then(function (docs) {
+                            info.tries.push({ label: t.label, count: (docs || []).length, sample: (docs || []).slice(0, 3) });
+                            nextQ();
+                        }, function (err) {
+                            info.tries.push({ label: t.label, error: err && err.message });
+                            nextQ();
+                        });
+                    } else {
+                        info.tries.push({ label: t.label, error: 'toArray non-promise' });
+                        nextQ();
+                    }
+                } catch (e) {
+                    info.tries.push({ label: t.label, error: e.message });
+                    nextQ();
+                }
+            }
+            nextQ();
             return;
         }
 
