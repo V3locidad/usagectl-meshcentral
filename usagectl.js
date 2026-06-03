@@ -34,10 +34,9 @@ module.exports.usagectl = function (parent) {
             if (!coll || typeof coll.find !== 'function') {
                 return cb(new Error('db.powerfile indisponible'), []);
             }
-            // Schéma typique d'un power event MC : { nodeid, time, power }
-            // Le filtre time est un nombre (timestamp ms), pas un Date — à
-            // confirmer via debug si besoin.
-            const q = { nodeid: nodeId, time: { $gte: oldestTime } };
+            // powerfile : { nodeid, time:Date, power }. MongoDB compare
+            // Date $gte Number = jamais match → toujours filtrer avec Date.
+            const q = { nodeid: nodeId, time: { $gte: new Date(oldestTime) } };
             const cur = coll.find(q);
             // Tri par time croissant si l'API le permet.
             const sorted = (typeof cur.sort === 'function') ? cur.sort({ time: 1 }) : cur;

@@ -1,7 +1,7 @@
 {
   "name": "usagectl",
   "shortName": "usagectl",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "author": "V3locidad",
   "description": "Taux d'occupation par salle et par poste sur les 7 derniers jours, basé sur la power timeline MeshCentral.",
   "hasAdminPanel": true,
