@@ -35,9 +35,10 @@
 <div class="bar">
   <span>Période :</span>
   <select id="daysSel">
-    <option value="7" selected>7 derniers jours</option>
-    <option value="14">14 derniers jours</option>
-    <option value="30">30 derniers jours</option>
+    <option value="1">Jour (24h)</option>
+    <option value="7" selected>Semaine (7 j)</option>
+    <option value="30">Mois (30 j)</option>
+    <option value="90">Trimestre (90 j)</option>
   </select>
   <span style="color:#666;font-size:11px">Basé sur la power timeline (poste en ligne / sous tension)</span>
   <span style="flex:1"></span>
@@ -138,7 +139,7 @@
   }
 
   $('refreshBtn').onclick = function () { loadSalles(); };
-  $('daysSel').onchange = function () { /* l'utilisateur cliquera Calculer */ };
+  $('daysSel').onchange = function () { loadSalles(); };
   $('content').innerHTML = '<div class="empty">Choisis la période et clique <b>↻ Rafraîchir</b> pour calculer.<br><br>Sur 356 postes, le calcul prend 30-90s (séquentiel pour ne pas saturer MC).</div>';
 </script>
 </body>

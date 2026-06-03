@@ -146,7 +146,7 @@ module.exports.usagectl = function (parent) {
             return;
         }
 
-        const days = Math.max(1, Math.min(30, parseInt(req.query.days, 10) || 7));
+        const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 7));
         const now = Date.now();
         const start = now - days * 86400000;
         const totalMs = now - start;
