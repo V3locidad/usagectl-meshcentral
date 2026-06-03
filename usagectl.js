@@ -29,26 +29,14 @@ module.exports.usagectl = function (parent) {
     // query directe des events.
     function getPowerTimeline(nodeId, oldestTime, cb) {
         const db = obj.meshServer.db;
-        if (typeof db.GetPowerTimelineByNode === 'function') {
-            db.GetPowerTimelineByNode(nodeId, oldestTime, function (err, docs) {
+        // MC expose getPowerTimeline(nodeid, oldestTime, lastSampleTime, func).
+        if (typeof db.getPowerTimeline === 'function') {
+            db.getPowerTimeline(nodeId, oldestTime, Date.now(), function (err, docs) {
                 cb(err, docs || []);
             });
             return;
         }
-        // Fallback : query directe sur les events power.
-        // En NeDB et MongoDB, l'API db.eventsfile.find existe.
-        try {
-            const q = { etype: 'power', nodeid: nodeId, time: { $gte: oldestTime } };
-            // MC stocke parfois sous l'attribut "power" et parfois "p" — on
-            // ne projette pas pour rester portable.
-            if (db.eventsfile && typeof db.eventsfile.find === 'function') {
-                const cur = db.eventsfile.find(q);
-                if (typeof cur.sort === 'function') cur.sort({ time: 1 });
-                cur.toArray(function (e2, docs) { cb(e2, docs || []); });
-                return;
-            }
-        } catch (_) {}
-        cb(new Error('API power timeline indisponible'), []);
+        cb(new Error('db.getPowerTimeline indisponible'), []);
     }
 
     // Calcule la durée (ms) passée à power=1 dans [start, end] à partir d'une
@@ -86,40 +74,18 @@ module.exports.usagectl = function (parent) {
             const nodeId = String(req.query.nodeId || '');
             const oldest = Date.now() - 7 * 86400000;
             const info = {
-                hasGetPowerTimelineByNode: typeof db.GetPowerTimelineByNode === 'function',
-                hasGetPowerTimelineByNodeAlt: typeof db.getPowerTimelineByNode === 'function',
-                hasGetEvents: typeof db.GetEvents === 'function',
-                hasEventsfile: !!db.eventsfile,
-                eventsfileType: db.eventsfile ? (db.eventsfile.constructor && db.eventsfile.constructor.name) : null,
+                hasGetPowerTimeline: typeof db.getPowerTimeline === 'function',
                 dbType: db.databaseType,
-                dbKeys: Object.keys(db).filter((k) => typeof db[k] === 'function').sort(),
             };
             if (!nodeId) return sendJson(res, 200, info);
-            // Essai 1 : GetPowerTimelineByNode (signature à 4 args)
-            if (typeof db.GetPowerTimelineByNode === 'function') {
-                try {
-                    db.GetPowerTimelineByNode(nodeId, oldest, Date.now(), function (err, docs) {
-                        info.timelineErr = err && err.message;
-                        info.timelineCount = (docs || []).length;
-                        info.timelineSample = (docs || []).slice(0, 5);
-                        // Essai 2 : query directe events
-                        if (db.eventsfile) {
-                            try {
-                                const cur = db.eventsfile.find({ etype: 'power', nodeid: nodeId, time: { $gte: new Date(oldest) } });
-                                const toArr = (typeof cur.toArray === 'function') ? cur.toArray.bind(cur) : ((cb) => cur.exec(cb));
-                                toArr(function (e2, docs2) {
-                                    info.eventsErr = e2 && e2.message;
-                                    info.eventsCount = (docs2 || []).length;
-                                    info.eventsSample = (docs2 || []).slice(0, 5);
-                                    sendJson(res, 200, info);
-                                });
-                                return;
-                            } catch (e) { info.eventsExc = e.message; }
-                        }
-                        sendJson(res, 200, info);
-                    });
-                    return;
-                } catch (e) { info.timelineExc = e.message; }
+            if (typeof db.getPowerTimeline === 'function') {
+                db.getPowerTimeline(nodeId, oldest, Date.now(), function (err, docs) {
+                    info.timelineErr = err && err.message;
+                    info.timelineCount = (docs || []).length;
+                    info.timelineSample = (docs || []).slice(0, 10);
+                    sendJson(res, 200, info);
+                });
+                return;
             }
             return sendJson(res, 200, info);
         }
