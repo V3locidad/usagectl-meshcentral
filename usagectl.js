@@ -25,13 +25,29 @@ module.exports.usagectl = function (parent) {
     obj.exports = [];
 
     function getPowerTimeline(nodeId, oldestTime, cb) {
+        // On bypass db.getPowerTimeline (signature incompatible avec ce MC
+        // sur driver mongo 4+ qui retourne des promises) et on query la
+        // collection eventsfile directement.
         try {
             const db = obj.meshServer && obj.meshServer.db;
-            if (!db || typeof db.getPowerTimeline !== 'function') return cb(new Error('db.getPowerTimeline indisponible'), []);
-            // Signature MC : (nodeid, oldestTime, func). 3 args.
-            db.getPowerTimeline(nodeId, oldestTime, function (err, docs) {
-                try { cb(err, docs || []); } catch (e) {}
-            });
+            if (!db || !db.eventsfile || typeof db.eventsfile.find !== 'function') {
+                return cb(new Error('db.eventsfile indisponible'), []);
+            }
+            const q = { etype: 'power', nodeid: nodeId, time: { $gte: new Date(oldestTime) } };
+            const cur = db.eventsfile.find(q);
+            // Tri par time croissant si l'API le permet.
+            const sorted = (typeof cur.sort === 'function') ? cur.sort({ time: 1 }) : cur;
+            const toArr = sorted.toArray();
+            // toArr peut être Promise (mongo 4+) ou void avec callback (NeDB).
+            if (toArr && typeof toArr.then === 'function') {
+                toArr.then(function (docs) { try { cb(null, docs || []); } catch (_) {} },
+                           function (err) { try { cb(err, []); } catch (_) {} });
+            } else {
+                // Fallback NeDB-style : on essaie de re-call avec callback.
+                try {
+                    sorted.toArray(function (err, docs) { try { cb(err, docs || []); } catch (_) {} });
+                } catch (e) { try { cb(e, []); } catch (_) {} }
+            }
         } catch (e) {
             try { cb(e, []); } catch (_) {}
         }
@@ -78,21 +94,15 @@ module.exports.usagectl = function (parent) {
             const db = obj.meshServer.db;
             const nodeId = String(req.query.nodeId || '');
             const oldest = Date.now() - 7 * 86400000;
-            const info = {
-                hasGetPowerTimeline: typeof db.getPowerTimeline === 'function',
-                dbType: db.databaseType,
-            };
+            const info = { dbType: db.databaseType };
             if (!nodeId) return sendJson(res, 200, info);
-            if (typeof db.getPowerTimeline === 'function') {
-                db.getPowerTimeline(nodeId, oldest, function (err, docs) {
-                    info.timelineErr = err && err.message;
-                    info.timelineCount = (docs || []).length;
-                    info.timelineSample = (docs || []).slice(0, 10);
-                    sendJson(res, 200, info);
-                });
-                return;
-            }
-            return sendJson(res, 200, info);
+            getPowerTimeline(nodeId, oldest, function (err, docs) {
+                info.err = err && err.message;
+                info.count = (docs || []).length;
+                info.sample = (docs || []).slice(0, 10);
+                sendJson(res, 200, info);
+            });
+            return;
         }
 
         const days = Math.max(1, Math.min(30, parseInt(req.query.days, 10) || 7));
