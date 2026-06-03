@@ -28,8 +28,9 @@ module.exports.usagectl = function (parent) {
         try {
             const db = obj.meshServer && obj.meshServer.db;
             if (!db || typeof db.getPowerTimeline !== 'function') return cb(new Error('db.getPowerTimeline indisponible'), []);
-            db.getPowerTimeline(nodeId, oldestTime, Date.now(), function (err, docs) {
-                try { cb(err, docs || []); } catch (e) { /* avale, ne crash pas MC */ }
+            // Signature MC : (nodeid, oldestTime, func). 3 args.
+            db.getPowerTimeline(nodeId, oldestTime, function (err, docs) {
+                try { cb(err, docs || []); } catch (e) {}
             });
         } catch (e) {
             try { cb(e, []); } catch (_) {}
@@ -83,7 +84,7 @@ module.exports.usagectl = function (parent) {
             };
             if (!nodeId) return sendJson(res, 200, info);
             if (typeof db.getPowerTimeline === 'function') {
-                db.getPowerTimeline(nodeId, oldest, Date.now(), function (err, docs) {
+                db.getPowerTimeline(nodeId, oldest, function (err, docs) {
                     info.timelineErr = err && err.message;
                     info.timelineCount = (docs || []).length;
                     info.timelineSample = (docs || []).slice(0, 10);
