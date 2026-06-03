@@ -98,10 +98,12 @@ module.exports.usagectl = function (parent) {
             if (!nodeId) return sendJson(res, 200, info);
             // Plusieurs queries pour identifier le bon schéma.
             const queries = [
-                { label: 'etype=power + nodeid + time>=date', q: { etype: 'power', nodeid: nodeId, time: { $gte: new Date(oldest) } } },
-                { label: 'etype=power + nodeid (no time filter)', q: { etype: 'power', nodeid: nodeId } },
-                { label: 'nodeid + power exists (no etype)', q: { nodeid: nodeId, power: { $exists: true } } },
-                { label: 'nodeid only (any event, limit 5)', q: { nodeid: nodeId }, limit: 5 },
+                { label: 'etype=power (any node, limit 3)', q: { etype: 'power' }, limit: 3 },
+                { label: 'power field exists (any, limit 3)', q: { power: { $exists: true } }, limit: 3 },
+                { label: 'any event with this nodeid', q: { nodeid: nodeId }, limit: 3 },
+                { label: 'any event nodeid alt: nid', q: { nid: nodeId }, limit: 3 },
+                { label: 'any event nodeid alt: nodeId', q: { nodeId: nodeId }, limit: 3 },
+                { label: 'any event sample (any field, limit 5)', q: {}, limit: 5 },
             ];
             info.tries = [];
             let qi = 0;
