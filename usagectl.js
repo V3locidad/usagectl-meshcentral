@@ -222,7 +222,7 @@ module.exports.usagectl = function (parent) {
                                 name: meshById[mid] || mid,
                                 nodes: meshTotals[mid].nodes,
                                 avgOnPct: meshTotals[mid].nodes ? Math.round(((meshTotals[mid].totalOn / (meshTotals[mid].nodes * totalMs)) * 100) * 10) / 10 : 0,
-                                avgOnHours: meshTotals[mid].nodes ? Math.round((meshTotals[mid].totalOn / meshTotals[mid].nodes / 3600000) * 10) / 10 : 0,
+                                avgOnMinutes: meshTotals[mid].nodes ? Math.round(meshTotals[mid].totalOn / meshTotals[mid].nodes / 60000) : 0,
                             }));
                             out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
                             return sendJson(res, 200, { salles: out, days: days });
@@ -293,7 +293,7 @@ module.exports.usagectl = function (parent) {
                                 name: n.name || n._id,
                                 os: n.osdesc || '',
                                 onPct: Math.round((on / totalMs * 100) * 10) / 10,
-                                onHours: Math.round((on / 3600000) * 10) / 10,
+                                onMinutes: Math.round(on / 60000),
                             });
                             setImmediate(nextNode);
                         });

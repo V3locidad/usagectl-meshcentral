@@ -60,6 +60,14 @@
     });
   }
 
+  function formatHm(min) {
+    if (!min || min < 0) return '0min';
+    var h = Math.floor(min / 60);
+    var m = min % 60;
+    if (h === 0) return m + 'min';
+    return h + 'h' + (m < 10 ? '0' + m : m);
+  }
+
   function occBar(pct) {
     var p = Math.max(0, Math.min(100, pct || 0));
     // Niveau visuel
@@ -94,7 +102,7 @@
               + '<td>' + s.nodes + '</td>'
               + '<td>' + occBar(s.avgOnPct) + '</td>'
               + '<td class="occLabel">' + s.avgOnPct + ' %</td>'
-              + '<td>' + s.avgOnHours + ' h</td>'
+              + '<td>' + formatHm(s.avgOnMinutes) + '</td>'
               + '</tr>';
       });
       html += '</tbody></table>';
@@ -134,7 +142,7 @@
                 + '<td style="font-size:11px;color:#666">' + escapeHtml(n.os) + '</td>'
                 + '<td>' + occBar(n.onPct) + '</td>'
                 + '<td class="occLabel">' + n.onPct + ' %</td>'
-                + '<td>' + n.onHours + ' h</td>'
+                + '<td>' + formatHm(n.onMinutes) + '</td>'
                 + '</tr>';
         });
         html += '</tbody></table>';
