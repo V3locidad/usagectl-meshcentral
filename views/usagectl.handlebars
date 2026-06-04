@@ -88,13 +88,14 @@
       if (!salles.length) { $('content').innerHTML = '<div class="empty">Aucune salle.</div>'; return; }
       var periodLabel = r.days === 1 ? '24h' : (r.days + ' jours');
       var modeLabel = $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
-      var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + periodLabel + modeLabel + '</h3></div>'
+      var totalLabel = formatHm(r.totalMinutes || 0);
+      var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + periodLabel + modeLabel + ' = <span style="color:#0d6efd">' + totalLabel + '</span> dispo</h3></div>'
                + '<table><thead><tr>'
                + '<th>Salle</th>'
                + '<th style="width:80px">Postes</th>'
                + '<th style="width:200px">Taux d\'occupation moyen</th>'
                + '<th style="width:120px">%</th>'
-               + '<th style="width:200px">Heures moy./poste</th>'
+               + '<th style="width:220px">Heures moy./poste (/ ' + totalLabel + ')</th>'
                + '</tr></thead><tbody>';
       salles.forEach(function (s) {
         html += '<tr class="clickable" data-meshid="' + escapeHtml(s.meshid) + '">'
@@ -102,7 +103,7 @@
               + '<td>' + s.nodes + '</td>'
               + '<td>' + occBar(s.avgOnPct) + '</td>'
               + '<td class="occLabel">' + s.avgOnPct + ' %</td>'
-              + '<td>' + formatHm(s.avgOnMinutes) + '</td>'
+              + '<td>' + formatHm(s.avgOnMinutes) + ' / ' + totalLabel + '</td>'
               + '</tr>';
       });
       html += '</tbody></table>';
@@ -123,9 +124,10 @@
       var nodes = r.nodes || [];
       var periodLabel = r.days === 1 ? '24h' : (r.days + ' jours');
       var modeLabel = $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
+      var totalLabel = formatHm(r.totalMinutes || 0);
       var html = '<div class="hdr">'
                + '<button class="back" id="backBtn">← Retour</button>'
-               + '<h3>Postes — sur ' + periodLabel + modeLabel + '</h3>'
+               + '<h3>Postes — sur ' + periodLabel + modeLabel + ' = <span style="color:#0d6efd">' + totalLabel + '</span> dispo</h3>'
                + '</div>';
       if (!nodes.length) html += '<div class="empty">Aucun poste.</div>';
       else {
@@ -134,7 +136,7 @@
               + '<th>OS</th>'
               + '<th style="width:200px">Taux d\'occupation</th>'
               + '<th style="width:120px">%</th>'
-              + '<th style="width:200px">Heures</th>'
+              + '<th style="width:220px">Heures (/ ' + totalLabel + ')</th>'
               + '</tr></thead><tbody>';
         nodes.forEach(function (n) {
           html += '<tr>'
@@ -142,7 +144,7 @@
                 + '<td style="font-size:11px;color:#666">' + escapeHtml(n.os) + '</td>'
                 + '<td>' + occBar(n.onPct) + '</td>'
                 + '<td class="occLabel">' + n.onPct + ' %</td>'
-                + '<td>' + formatHm(n.onMinutes) + '</td>'
+                + '<td>' + formatHm(n.onMinutes) + ' / ' + totalLabel + '</td>'
                 + '</tr>';
         });
         html += '</tbody></table>';

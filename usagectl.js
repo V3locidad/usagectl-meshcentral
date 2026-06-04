@@ -225,7 +225,7 @@ module.exports.usagectl = function (parent) {
                                 avgOnMinutes: meshTotals[mid].nodes ? Math.round(meshTotals[mid].totalOn / meshTotals[mid].nodes / 60000) : 0,
                             }));
                             out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
-                            return sendJson(res, 200, { salles: out, days: days });
+                            return sendJson(res, 200, { salles: out, days: days, totalMinutes: Math.round(totalMs / 60000) });
                         }
                         const n = allNodes[idx++];
                         let done = false;
@@ -272,7 +272,7 @@ module.exports.usagectl = function (parent) {
                 function nextNode() {
                     if (idx >= list.length) {
                         out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
-                        return sendJson(res, 200, { meshid: meshid, days: days, nodes: out });
+                        return sendJson(res, 200, { meshid: meshid, days: days, nodes: out, totalMinutes: Math.round(totalMs / 60000) });
                     }
                     const n = list[idx++];
                     let done = false;
