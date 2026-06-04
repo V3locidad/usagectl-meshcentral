@@ -56,31 +56,69 @@ module.exports.usagectl = function (parent) {
         }
     }
 
-    // Calcule la durée (ms) passée à power=1 dans [start, end] à partir d'une
-    // série triée d'events { time, power }.
-    function computeOnTimeMs(events, start, end) {
+    // Construit la liste des créneaux scolaires [ts_start, ts_end] dans
+    // [start, end] : Lun-Ven 8h-18h (heures locales du serveur).
+    function buildSchoolWindows(start, end) {
+        const out = [];
+        const d0 = new Date(start);
+        d0.setHours(0, 0, 0, 0);
+        for (let t = d0.getTime(); t < end; t += 86400000) {
+            const d = new Date(t);
+            const dow = d.getDay();          // 0=dim, 1=lun, ..., 6=sam
+            if (dow < 1 || dow > 5) continue;
+            const ws = new Date(d); ws.setHours(8, 0, 0, 0);
+            const we = new Date(d); we.setHours(18, 0, 0, 0);
+            const a = Math.max(ws.getTime(), start);
+            const b = Math.min(we.getTime(), end);
+            if (b > a) out.push([a, b]);
+        }
+        return out;
+    }
+
+    function totalWindowsMs(windows) {
+        let s = 0;
+        for (let i = 0; i < windows.length; i++) s += windows[i][1] - windows[i][0];
+        return s;
+    }
+
+    function intersectSum(a, b, windows) {
+        let s = 0;
+        for (let i = 0; i < windows.length; i++) {
+            const ws = windows[i][0], we = windows[i][1];
+            const x = Math.max(a, ws);
+            const y = Math.min(b, we);
+            if (y > x) s += y - x;
+        }
+        return s;
+    }
+
+    // Durée allumée (power=1) dans [start, end], restreinte aux créneaux
+    // scolaires (Lun-Ven 8h-18h). Si windows est null → mode 24/7.
+    function computeOnTimeMs(events, start, end, windows) {
         let on = 0;
         let curState = null;
         let curStart = start;
-        // Trie défensif au cas où la collection n'est pas pré-triée.
         events.sort(function (a, b) {
             const ta = (a.time instanceof Date) ? a.time.getTime() : Number(a.time);
             const tb = (b.time instanceof Date) ? b.time.getTime() : Number(b.time);
             return ta - tb;
         });
+        function add(from, to) {
+            if (to <= from) return;
+            on += windows ? intersectSum(from, to, windows) : (to - from);
+        }
         for (let i = 0; i < events.length; i++) {
             const e = events[i];
             const t = (e.time instanceof Date) ? e.time.getTime() : Number(e.time);
-            // MC utilise généralement `power` (0=off, 1=on, 2=alert, etc.)
             const p = (e.power !== undefined) ? Number(e.power) : Number(e.p);
             if (isNaN(t) || isNaN(p)) continue;
             if (t < start) { curState = p; continue; }
             if (t > end) break;
-            if (curState === 1) on += (t - curStart);
+            if (curState === 1) add(curStart, t);
             curState = p;
             curStart = t;
         }
-        if (curState === 1) on += (end - curStart);
+        if (curState === 1) add(curStart, end);
         return on;
     }
 
@@ -149,7 +187,10 @@ module.exports.usagectl = function (parent) {
         const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 7));
         const now = Date.now();
         const start = now - days * 86400000;
-        const totalMs = now - start;
+        // Mode scolaire par défaut. Désactivable via ?schoolHours=0.
+        const schoolHours = req.query.schoolHours !== '0';
+        const windows = schoolHours ? buildSchoolWindows(start, now) : null;
+        const totalMs = schoolHours ? totalWindowsMs(windows) : (now - start);
 
         if (action === 'salles') {
             // Sérialisation totale : un seul getPowerTimeline en cours à la
@@ -200,7 +241,7 @@ module.exports.usagectl = function (parent) {
                                 done = true;
                                 clearTimeout(guard);
                                 try {
-                                    const on = computeOnTimeMs(ev || [], start, now);
+                                    const on = computeOnTimeMs(ev || [], start, now, windows);
                                     if (meshTotals[n.meshid]) meshTotals[n.meshid].totalOn += on;
                                 } catch (_) {}
                                 setImmediate(nextNode);
@@ -246,7 +287,7 @@ module.exports.usagectl = function (parent) {
                             if (done) return;
                             done = true;
                             clearTimeout(guard);
-                            const on = computeOnTimeMs(ev || [], start, now);
+                            const on = computeOnTimeMs(ev || [], start, now, windows);
                             out.push({
                                 id: n._id,
                                 name: n.name || n._id,

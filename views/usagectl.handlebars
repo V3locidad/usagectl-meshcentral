@@ -40,7 +40,7 @@
     <option value="30">Mois (30 j)</option>
     <option value="90">Trimestre (90 j)</option>
   </select>
-  <span style="color:#666;font-size:11px">Basé sur la power timeline (poste en ligne / sous tension)</span>
+  <label title="Ne compter que Lun-Ven 8h-18h (heures de cours)"><input type="checkbox" id="schoolHours" checked> Heures scolaires uniquement (Lun-Ven 8h-18h)</label>
   <span style="flex:1"></span>
   <button id="refreshBtn" class="primary">↻ Rafraîchir</button>
 </div>
@@ -73,18 +73,20 @@
     currentView = 'salles';
     $('content').innerHTML = '<div class="empty">Calcul en cours… (peut prendre 5-30s selon le nombre de postes)</div>';
     var days = $('daysSel').value;
-    api('salles', { days: days }).then(function (r) {
+    var sh = $('schoolHours').checked ? '1' : '0';
+    api('salles', { days: days, schoolHours: sh }).then(function (r) {
       if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
       var salles = r.salles || [];
       if (!salles.length) { $('content').innerHTML = '<div class="empty">Aucune salle.</div>'; return; }
       var periodLabel = r.days === 1 ? '24h' : (r.days + ' jours');
-      var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + periodLabel + '</h3></div>'
+      var modeLabel = $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
+      var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + periodLabel + modeLabel + '</h3></div>'
                + '<table><thead><tr>'
                + '<th>Salle</th>'
                + '<th style="width:80px">Postes</th>'
                + '<th style="width:200px">Taux d\'occupation moyen</th>'
                + '<th style="width:120px">%</th>'
-               + '<th style="width:180px">Heures moy./poste sur ' + periodLabel + '</th>'
+               + '<th style="width:200px">Heures moy./poste</th>'
                + '</tr></thead><tbody>';
       salles.forEach(function (s) {
         html += '<tr class="clickable" data-meshid="' + escapeHtml(s.meshid) + '">'
@@ -107,13 +109,15 @@
     currentView = 'salle';
     $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
     var days = $('daysSel').value;
-    api('salleDetail', { meshid: meshid, days: days }).then(function (r) {
+    var sh = $('schoolHours').checked ? '1' : '0';
+    api('salleDetail', { meshid: meshid, days: days, schoolHours: sh }).then(function (r) {
       if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
       var nodes = r.nodes || [];
       var periodLabel = r.days === 1 ? '24h' : (r.days + ' jours');
+      var modeLabel = $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
       var html = '<div class="hdr">'
                + '<button class="back" id="backBtn">← Retour</button>'
-               + '<h3>Postes — sur ' + periodLabel + '</h3>'
+               + '<h3>Postes — sur ' + periodLabel + modeLabel + '</h3>'
                + '</div>';
       if (!nodes.length) html += '<div class="empty">Aucun poste.</div>';
       else {
@@ -122,7 +126,7 @@
               + '<th>OS</th>'
               + '<th style="width:200px">Taux d\'occupation</th>'
               + '<th style="width:120px">%</th>'
-              + '<th style="width:180px">Heures sur ' + periodLabel + '</th>'
+              + '<th style="width:200px">Heures</th>'
               + '</tr></thead><tbody>';
         nodes.forEach(function (n) {
           html += '<tr>'
@@ -142,6 +146,7 @@
 
   $('refreshBtn').onclick = function () { loadSalles(); };
   $('daysSel').onchange = function () { loadSalles(); };
+  $('schoolHours').onchange = function () { loadSalles(); };
   $('content').innerHTML = '<div class="empty">Choisis la période et clique <b>↻ Rafraîchir</b> pour calculer.<br><br>Sur 356 postes, le calcul prend 30-90s (séquentiel pour ne pas saturer MC).</div>';
 </script>
 </body>
