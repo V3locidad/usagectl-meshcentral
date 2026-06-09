@@ -33,14 +33,25 @@
 <h2>Taux d'occupation <span id="cfgState" class="pill">prêt</span></h2>
 
 <div class="bar">
-  <span>Période :</span>
-  <select id="daysSel">
-    <option value="1">Jour (24h)</option>
-    <option value="7" selected>Semaine (7 j)</option>
-    <option value="30">Mois (30 j)</option>
-    <option value="90">Trimestre (90 j)</option>
+  <span>Mode :</span>
+  <select id="modeSel">
+    <option value="week" selected>Semaine précise (Lun-Ven 8h-18h)</option>
+    <option value="rolling">Période glissante</option>
   </select>
-  <label title="Ne compter que Lun-Ven 8h-18h (heures de cours)"><input type="checkbox" id="schoolHours" checked> Heures scolaires uniquement (Lun-Ven 8h-18h)</label>
+  <span id="weekWrap">
+    <span>Semaine :</span>
+    <select id="weekSel"></select>
+  </span>
+  <span id="rollingWrap" style="display:none">
+    <span>Période :</span>
+    <select id="daysSel">
+      <option value="1">Jour (24h)</option>
+      <option value="7" selected>Semaine (7 j)</option>
+      <option value="30">Mois (30 j)</option>
+      <option value="70">10 semaines (70 j)</option>
+    </select>
+    <label title="Ne compter que Lun-Ven 8h-18h (heures de cours)"><input type="checkbox" id="schoolHours" checked> Lun-Ven 8h-18h</label>
+  </span>
   <span style="flex:1"></span>
   <button id="refreshBtn" class="primary">↻ Rafraîchir</button>
 </div>
@@ -77,17 +88,57 @@
 
   var currentView = 'salles';
 
+  // --- Construction de la liste des semaines (10 dernières) ---
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function fmtDM(d) { return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); }
+  function fmtIsoDate(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function buildWeekOptions() {
+    var sel = $('weekSel');
+    sel.innerHTML = '';
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var dow = today.getDay(); // 0=dim
+    var mondayCurrent = new Date(today);
+    mondayCurrent.setDate(mondayCurrent.getDate() + (dow === 0 ? -6 : 1 - dow));
+    for (var i = 0; i < 10; i++) {
+      var mon = new Date(mondayCurrent);
+      mon.setDate(mon.getDate() - i * 7);
+      var fri = new Date(mon); fri.setDate(fri.getDate() + 4);
+      var label = (i === 0 ? 'Semaine en cours' : (i === 1 ? 'Semaine dernière' : 'Il y a ' + i + ' semaines'))
+                  + ' — Lun ' + fmtDM(mon) + ' → Ven ' + fmtDM(fri);
+      var opt = document.createElement('option');
+      opt.value = fmtIsoDate(mon);
+      opt.textContent = label;
+      sel.appendChild(opt);
+    }
+  }
+  buildWeekOptions();
+
+  function getQuery() {
+    if ($('modeSel').value === 'week') {
+      return { weekStart: $('weekSel').value };
+    }
+    return { days: $('daysSel').value, schoolHours: $('schoolHours').checked ? '1' : '0' };
+  }
+
+  function modeLabelText(r) {
+    if (r && r.weekMode) return ' (Lun-Ven 8h-18h — ' + escapeHtml(r.weekLabel || '') + ')';
+    return $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
+  }
+
+  function periodLabelText(r) {
+    if (r && r.weekMode) return 'la semaine';
+    return r.days === 1 ? '24h' : (r.days + ' jours');
+  }
+
   function loadSalles() {
     currentView = 'salles';
     $('content').innerHTML = '<div class="empty">Calcul en cours… (peut prendre 5-30s selon le nombre de postes)</div>';
-    var days = $('daysSel').value;
-    var sh = $('schoolHours').checked ? '1' : '0';
-    api('salles', { days: days, schoolHours: sh }).then(function (r) {
+    api('salles', getQuery()).then(function (r) {
       if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
       var salles = r.salles || [];
       if (!salles.length) { $('content').innerHTML = '<div class="empty">Aucune salle.</div>'; return; }
-      var periodLabel = r.days === 1 ? '24h' : (r.days + ' jours');
-      var modeLabel = $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
+      var periodLabel = periodLabelText(r);
+      var modeLabel = modeLabelText(r);
       var totalLabel = formatHm(r.totalMinutes || 0);
       var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + periodLabel + modeLabel + ' = <span style="color:#0d6efd">' + totalLabel + '</span> dispo</h3></div>'
                + '<table><thead><tr>'
@@ -117,13 +168,12 @@
   function loadSalleDetail(meshid) {
     currentView = 'salle';
     $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
-    var days = $('daysSel').value;
-    var sh = $('schoolHours').checked ? '1' : '0';
-    api('salleDetail', { meshid: meshid, days: days, schoolHours: sh }).then(function (r) {
+    var q = getQuery(); q.meshid = meshid;
+    api('salleDetail', q).then(function (r) {
       if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
       var nodes = r.nodes || [];
-      var periodLabel = r.days === 1 ? '24h' : (r.days + ' jours');
-      var modeLabel = $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
+      var periodLabel = periodLabelText(r);
+      var modeLabel = modeLabelText(r);
       var totalLabel = formatHm(r.totalMinutes || 0);
       var html = '<div class="hdr">'
                + '<button class="back" id="backBtn">← Retour</button>'
@@ -154,10 +204,18 @@
     });
   }
 
+  function updateModeUi() {
+    var m = $('modeSel').value;
+    $('weekWrap').style.display = (m === 'week') ? '' : 'none';
+    $('rollingWrap').style.display = (m === 'rolling') ? '' : 'none';
+  }
+  updateModeUi();
+  $('modeSel').onchange = function () { updateModeUi(); loadSalles(); };
+  $('weekSel').onchange = function () { loadSalles(); };
   $('refreshBtn').onclick = function () { loadSalles(); };
   $('daysSel').onchange = function () { loadSalles(); };
   $('schoolHours').onchange = function () { loadSalles(); };
-  $('content').innerHTML = '<div class="empty">Choisis la période et clique <b>↻ Rafraîchir</b> pour calculer.<br><br>Sur 356 postes, le calcul prend 30-90s (séquentiel pour ne pas saturer MC).</div>';
+  $('content').innerHTML = '<div class="empty">Choisis la semaine ou la période, puis clique <b>↻ Rafraîchir</b>.<br><br>Sur 356 postes, le calcul prend 30-90s (séquentiel pour ne pas saturer MC).<br><br><i>Rétention : 10 semaines max. La power-timeline MeshCentral doit conserver les events plus longtemps que cette durée — vérifie <code>powerEventsMaxAge</code> dans config.json MC.</i></div>';
 </script>
 </body>
 </html>

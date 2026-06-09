@@ -184,13 +184,61 @@ module.exports.usagectl = function (parent) {
             return;
         }
 
-        const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 7));
-        const now = Date.now();
-        const start = now - days * 86400000;
-        // Mode scolaire par défaut. Désactivable via ?schoolHours=0.
-        const schoolHours = req.query.schoolHours !== '0';
-        const windows = schoolHours ? buildSchoolWindows(start, now) : null;
-        const totalMs = schoolHours ? totalWindowsMs(windows) : (now - start);
+        // Deux modes :
+        //  - ?weekStart=YYYY-MM-DD  → semaine précise (Lun→Ven 8h-18h), 1 semaine fixée
+        //  - sinon ?days=N         → période glissante des N derniers jours
+        // Rétention : 10 semaines max en arrière.
+        let start, now = Date.now();
+        let days;
+        let schoolHours;
+        let windows;
+        let totalMs;
+        const weekStart = String(req.query.weekStart || '').trim();
+        let weekMode = false;
+        let weekLabel = '';
+        if (/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+            const parts = weekStart.split('-').map(Number);
+            // Force le lundi de la semaine ISO indiquée (la date envoyée doit
+            // déjà être un lundi côté UI, mais on re-normalise par sécurité).
+            const d = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+            const dow = d.getDay(); // 0=dim
+            const offsetToMonday = (dow === 0 ? -6 : 1 - dow);
+            d.setDate(d.getDate() + offsetToMonday);
+            // Rejette les semaines > 10 en arrière (rétention).
+            const monMs = d.getTime();
+            const tenWeeksAgo = (function () {
+                const t = new Date(); t.setHours(0, 0, 0, 0);
+                const dow2 = t.getDay();
+                t.setDate(t.getDate() + (dow2 === 0 ? -6 : 1 - dow2)); // lundi courant
+                t.setDate(t.getDate() - 9 * 7); // 10 semaines incluant celle-ci = 9 semaines avant la courante
+                return t.getTime();
+            })();
+            if (monMs < tenWeeksAgo) return sendJson(res, 400, { error: 'semaine hors rétention (10 semaines max)' });
+            start = monMs;
+            // Fin = samedi 00:00 (couvre Lun→Ven inclus). buildSchoolWindows
+            // restreint déjà à Lun-Ven 8h-18h.
+            const endDate = new Date(d); endDate.setDate(endDate.getDate() + 5);
+            const endMs = endDate.getTime();
+            now = Math.min(now, endMs); // ne calcule pas au-delà de "maintenant" (semaine en cours)
+            schoolHours = true;
+            windows = buildSchoolWindows(start, endMs);
+            totalMs = totalWindowsMs(windows);
+            days = 7;
+            weekMode = true;
+            const fri = new Date(d); fri.setDate(fri.getDate() + 4);
+            weekLabel = 'Lun ' + fmtDM(d) + ' → Ven ' + fmtDM(fri);
+        } else {
+            days = Math.max(1, Math.min(70, parseInt(req.query.days, 10) || 7));
+            start = now - days * 86400000;
+            schoolHours = req.query.schoolHours !== '0';
+            windows = schoolHours ? buildSchoolWindows(start, now) : null;
+            totalMs = schoolHours ? totalWindowsMs(windows) : (now - start);
+        }
+        function fmtDM(d) {
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            return dd + '/' + mm;
+        }
 
         if (action === 'salles') {
             // Sérialisation totale : un seul getPowerTimeline en cours à la
@@ -225,7 +273,7 @@ module.exports.usagectl = function (parent) {
                                 avgOnMinutes: meshTotals[mid].nodes ? Math.round(meshTotals[mid].totalOn / meshTotals[mid].nodes / 60000) : 0,
                             }));
                             out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
-                            return sendJson(res, 200, { salles: out, days: days, totalMinutes: Math.round(totalMs / 60000) });
+                            return sendJson(res, 200, { salles: out, days: days, totalMinutes: Math.round(totalMs / 60000), weekMode: weekMode, weekLabel: weekLabel });
                         }
                         const n = allNodes[idx++];
                         let done = false;
@@ -272,7 +320,7 @@ module.exports.usagectl = function (parent) {
                 function nextNode() {
                     if (idx >= list.length) {
                         out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
-                        return sendJson(res, 200, { meshid: meshid, days: days, nodes: out, totalMinutes: Math.round(totalMs / 60000) });
+                        return sendJson(res, 200, { meshid: meshid, days: days, nodes: out, totalMinutes: Math.round(totalMs / 60000), weekMode: weekMode, weekLabel: weekLabel });
                     }
                     const n = list[idx++];
                     let done = false;
