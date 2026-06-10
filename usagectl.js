@@ -24,48 +24,33 @@ module.exports.usagectl = function (parent) {
     obj.meshServer = parent.parent;
     obj.exports = [];
 
-    function _runFind(coll, query, sortSpec, limit, cb) {
-        try {
-            let cur = coll.find(query);
-            if (sortSpec && typeof cur.sort === 'function') cur = cur.sort(sortSpec);
-            if (limit && typeof cur.limit === 'function') cur = cur.limit(limit);
-            const arr = cur.toArray();
-            if (arr && typeof arr.then === 'function') {
-                arr.then(function (docs) { try { cb(null, docs || []); } catch (_) {} },
-                         function (err) { try { cb(err, []); } catch (_) {} });
-            } else {
-                try { cur.toArray(function (err, docs) { try { cb(err, docs || []); } catch (_) {} }); }
-                catch (e) { try { cb(e, []); } catch (_) {} }
-            }
-        } catch (e) { try { cb(e, []); } catch (_) {} }
-    }
-
-    // MeshCentral stocke nodeid avec préfixe "node//" dans powerfile, mais
-    // les _id dans la collection 'node' sont sans préfixe. On normalise.
-    function powerNodeId(nodeId) {
-        const s = String(nodeId || '');
-        return s.indexOf('node//') === 0 ? s : ('node//' + s);
-    }
-
-    // Récupère :
-    //  - le dernier event power *avant* oldestTime (pour seed curState)
-    //  - les events power dans [oldestTime, +∞[
-    // Concatène le seed en tête (curStart sera correctement initialisé).
     function getPowerTimeline(nodeId, oldestTime, cb) {
+        // Power events stockés dans db.powerfile (collection 'power' séparée
+        // de 'events'). Query directe pour éviter db.getPowerTimeline qui
+        // crash MC dans ce setup.
         try {
             const db = obj.meshServer && obj.meshServer.db;
             const coll = db && (db.powerfile || db.eventsfile);
             if (!coll || typeof coll.find !== 'function') {
                 return cb(new Error('db.powerfile indisponible'), []);
             }
-            const oldestDate = new Date(oldestTime);
-            const nid = powerNodeId(nodeId);
-            _runFind(coll, { nodeid: nid, time: { $lt: oldestDate } }, { time: -1 }, 1, function (e1, seed) {
-                _runFind(coll, { nodeid: nid, time: { $gte: oldestDate } }, { time: 1 }, 0, function (e2, recent) {
-                    const out = (seed || []).concat(recent || []);
-                    cb(e2 || e1 || null, out);
-                });
-            });
+            // powerfile : { nodeid, time:Date, power }. MongoDB compare
+            // Date $gte Number = jamais match → toujours filtrer avec Date.
+            const q = { nodeid: nodeId, time: { $gte: new Date(oldestTime) } };
+            const cur = coll.find(q);
+            // Tri par time croissant si l'API le permet.
+            const sorted = (typeof cur.sort === 'function') ? cur.sort({ time: 1 }) : cur;
+            const toArr = sorted.toArray();
+            // toArr peut être Promise (mongo 4+) ou void avec callback (NeDB).
+            if (toArr && typeof toArr.then === 'function') {
+                toArr.then(function (docs) { try { cb(null, docs || []); } catch (_) {} },
+                           function (err) { try { cb(err, []); } catch (_) {} });
+            } else {
+                // Fallback NeDB-style : on essaie de re-call avec callback.
+                try {
+                    sorted.toArray(function (err, docs) { try { cb(err, docs || []); } catch (_) {} });
+                } catch (e) { try { cb(e, []); } catch (_) {} }
+            }
         } catch (e) {
             try { cb(e, []); } catch (_) {}
         }
@@ -109,10 +94,10 @@ module.exports.usagectl = function (parent) {
 
     // Durée allumée (power=1) dans [start, end], restreinte aux créneaux
     // scolaires (Lun-Ven 8h-18h). Si windows est null → mode 24/7.
-    // Renvoie { on, hasData } pour distinguer "pas de donnée" (rétention MC
-    // trop courte / poste jamais vu) de "était éteint".
     function computeOnTimeMs(events, start, end, windows) {
         let on = 0;
+        let curState = null;
+        let curStart = start;
         events.sort(function (a, b) {
             const ta = (a.time instanceof Date) ? a.time.getTime() : Number(a.time);
             const tb = (b.time instanceof Date) ? b.time.getTime() : Number(b.time);
@@ -122,44 +107,19 @@ module.exports.usagectl = function (parent) {
             if (to <= from) return;
             on += windows ? intersectSum(from, to, windows) : (to - from);
         }
-        // Normalise les events utiles.
-        const norm = [];
         for (let i = 0; i < events.length; i++) {
             const e = events[i];
             const t = (e.time instanceof Date) ? e.time.getTime() : Number(e.time);
             const p = (e.power !== undefined) ? Number(e.power) : Number(e.p);
             if (isNaN(t) || isNaN(p)) continue;
-            norm.push({ t: t, p: p });
-        }
-        // 1) seed = dernier event power AVANT start (si dispo)
-        let seededState = null;
-        let firstInRangeIdx = -1;
-        for (let i = 0; i < norm.length; i++) {
-            if (norm[i].t < start) { seededState = norm[i].p; continue; }
-            firstInRangeIdx = i;
-            break;
-        }
-        // 2) si pas de seed mais au moins un event dans la fenêtre, on infère :
-        //    un 1er event power=1 signifie qu'avant le poste était à 0 (et inversement).
-        let curState = seededState;
-        let curStart = start;
-        if (curState === null && firstInRangeIdx >= 0) {
-            curState = (norm[firstInRangeIdx].p === 1) ? 0 : 1;
-        }
-        // 3) traite les events dans [start, end]
-        if (firstInRangeIdx >= 0) {
-            for (let i = firstInRangeIdx; i < norm.length; i++) {
-                const t = norm[i].t;
-                const p = norm[i].p;
-                if (t > end) break;
-                if (curState === 1) add(curStart, t);
-                curState = p;
-                curStart = t;
-            }
+            if (t < start) { curState = p; continue; }
+            if (t > end) break;
+            if (curState === 1) add(curStart, t);
+            curState = p;
+            curStart = t;
         }
         if (curState === 1) add(curStart, end);
-        const hasData = (seededState !== null) || (firstInRangeIdx >= 0);
-        return { on: on, hasData: hasData };
+        return on;
     }
 
     obj.handleAdminReq = function (req, res, user) {
@@ -175,52 +135,6 @@ module.exports.usagectl = function (parent) {
 
         if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl' });
 
-        if (action === 'debugWeek') {
-            // Diagnostic d'une semaine pour un nodeId : counts d'events, seed,
-            // 1er/dernier event, échantillon. Utiliser avec ?nodeId=X&weekStart=YYYY-MM-DD
-            const nodeId = String(req.query.nodeId || '');
-            const ws = String(req.query.weekStart || '');
-            if (!nodeId || !/^\d{4}-\d{2}-\d{2}$/.test(ws)) return sendJson(res, 400, { error: 'nodeId et weekStart=YYYY-MM-DD requis' });
-            const p = ws.split('-').map(Number);
-            const d = new Date(p[0], p[1] - 1, p[2], 0, 0, 0, 0);
-            const dow = d.getDay();
-            d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
-            const monMs = d.getTime();
-            const endDate = new Date(d); endDate.setDate(endDate.getDate() + 5);
-            const endMs = endDate.getTime();
-            const db = obj.meshServer.db;
-            const coll = db.powerfile || db.eventsfile;
-            if (!coll) return sendJson(res, 500, { error: 'powerfile absent' });
-            _runFind(coll, { nodeid: powerNodeId(nodeId), time: { $lt: new Date(monMs) } }, { time: -1 }, 3, function (e1, before) {
-                _runFind(coll, { nodeid: powerNodeId(nodeId), time: { $gte: new Date(monMs), $lt: new Date(endMs) } }, { time: 1 }, 0, function (e2, inrange) {
-                    _runFind(coll, { nodeid: powerNodeId(nodeId) }, null, 0, function (e3, all) {
-                        // Sonde sans filtre nodeid pour identifier le format exact
-                        // stocké dans powerfile.
-                        _runFind(coll, {}, null, 5, function (e4, anySample) {
-                            const summarize = (arr) => (arr || []).map((e) => ({
-                                time: e.time, power: e.power != null ? e.power : e.p,
-                                nodeid: e.nodeid, nodeid_keys: Object.keys(e),
-                            }));
-                            sendJson(res, 200, {
-                                nodeId: nodeId,
-                                nodeIdShape: { length: nodeId.length, startsWithNode: nodeId.indexOf('node//') === 0 },
-                                weekStart: new Date(monMs).toISOString(),
-                                weekEnd: new Date(endMs).toISOString(),
-                                seedBefore: { count: (before || []).length, sample: summarize(before).slice(0, 3) },
-                                inRange: { count: (inrange || []).length, first: summarize(inrange).slice(0, 1), last: summarize((inrange || []).slice(-1)) },
-                                totalForNode: (all || []).length,
-                                allSample: summarize(all).slice(0, 5),
-                                anySample: summarize(anySample).slice(0, 5),
-                                collectionUsed: db.powerfile ? 'powerfile' : 'eventsfile',
-                                errors: { seed: e1 && e1.message, range: e2 && e2.message, all: e3 && e3.message, any: e4 && e4.message },
-                            });
-                        });
-                    });
-                });
-            });
-            return;
-        }
-
         if (action === 'debug') {
             // Inspecte ce qui est exposé par MC pour la power timeline et
             // remonte un échantillon brut sur un node.
@@ -235,8 +149,8 @@ module.exports.usagectl = function (parent) {
             const queries = [
                 { coll: 'powerfile', label: 'powerfile sample', q: {}, limit: 5 },
                 { coll: 'powerfile', label: 'powerfile nodeid=X', q: { nodeid: nodeId }, limit: 5 },
-                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(ms)', q: { nodeid: powerNodeId(nodeId), time: { $gte: oldest } }, limit: 5 },
-                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(date)', q: { nodeid: powerNodeId(nodeId), time: { $gte: new Date(oldest) } }, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(ms)', q: { nodeid: nodeId, time: { $gte: oldest } }, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(date)', q: { nodeid: nodeId, time: { $gte: new Date(oldest) } }, limit: 5 },
             ];
             info.tries = [];
             let qi = 0;
@@ -270,60 +184,40 @@ module.exports.usagectl = function (parent) {
             return;
         }
 
-        // Deux modes :
-        //  - ?weekStart=YYYY-MM-DD  → semaine précise (Lun→Ven 8h-18h), 1 semaine fixée
-        //  - sinon ?days=N         → période glissante des N derniers jours
-        // Rétention : 10 semaines max en arrière.
-        let start, now = Date.now();
-        let days;
-        let schoolHours;
-        let windows;
-        let totalMs;
-        const weekStart = String(req.query.weekStart || '').trim();
-        let weekMode = false;
-        let weekLabel = '';
-        if (/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
-            const parts = weekStart.split('-').map(Number);
-            // Force le lundi de la semaine ISO indiquée (la date envoyée doit
-            // déjà être un lundi côté UI, mais on re-normalise par sécurité).
-            const d = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
-            const dow = d.getDay(); // 0=dim
-            const offsetToMonday = (dow === 0 ? -6 : 1 - dow);
-            d.setDate(d.getDate() + offsetToMonday);
-            // Rejette les semaines > 10 en arrière (rétention).
-            const monMs = d.getTime();
-            const tenWeeksAgo = (function () {
-                const t = new Date(); t.setHours(0, 0, 0, 0);
-                const dow2 = t.getDay();
-                t.setDate(t.getDate() + (dow2 === 0 ? -6 : 1 - dow2)); // lundi courant
-                t.setDate(t.getDate() - 9 * 7); // 10 semaines incluant celle-ci = 9 semaines avant la courante
-                return t.getTime();
-            })();
-            if (monMs < tenWeeksAgo) return sendJson(res, 400, { error: 'semaine hors rétention (10 semaines max)' });
-            start = monMs;
-            // Fin = samedi 00:00 (couvre Lun→Ven inclus). buildSchoolWindows
-            // restreint déjà à Lun-Ven 8h-18h.
-            const endDate = new Date(d); endDate.setDate(endDate.getDate() + 5);
+        // Mode A : ?weekStart=YYYY-MM-DD (lundi) → semaine fixe Lun-Ven 8h-18h
+        // Mode B : ?days=N (rétrocompat) → période glissante
+        // Le RESTE du code est inchangé par rapport à v0.0.16 (qui marchait).
+        let days, start, now, schoolHours, windows, totalMs;
+        let weekMode = false, weekLabel = '';
+        const wsParam = String(req.query.weekStart || '').trim();
+        function _pad(n) { return n < 10 ? '0' + n : '' + n; }
+        function _fmtDM(d) { return _pad(d.getDate()) + '/' + _pad(d.getMonth() + 1); }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(wsParam)) {
+            const p = wsParam.split('-').map(Number);
+            const d = new Date(p[0], p[1] - 1, p[2], 0, 0, 0, 0);
+            // Normalise : force le lundi de la semaine indiquée.
+            const dow = d.getDay();
+            d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
+            start = d.getTime();
+            const endDate = new Date(d); endDate.setDate(endDate.getDate() + 5); // samedi 00h
             const endMs = endDate.getTime();
-            now = Math.min(now, endMs); // ne calcule pas au-delà de "maintenant" (semaine en cours)
+            const realNow = Date.now();
+            // On veut analyser jusqu'à samedi 00h, mais pas au-delà du présent.
+            now = Math.min(realNow, endMs);
             schoolHours = true;
             windows = buildSchoolWindows(start, endMs);
             totalMs = totalWindowsMs(windows);
             days = 7;
             weekMode = true;
             const fri = new Date(d); fri.setDate(fri.getDate() + 4);
-            weekLabel = 'Lun ' + fmtDM(d) + ' → Ven ' + fmtDM(fri);
+            weekLabel = 'Lun ' + _fmtDM(d) + ' → Ven ' + _fmtDM(fri);
         } else {
-            days = Math.max(1, Math.min(70, parseInt(req.query.days, 10) || 7));
+            days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 7));
+            now = Date.now();
             start = now - days * 86400000;
             schoolHours = req.query.schoolHours !== '0';
             windows = schoolHours ? buildSchoolWindows(start, now) : null;
             totalMs = schoolHours ? totalWindowsMs(windows) : (now - start);
-        }
-        function fmtDM(d) {
-            const dd = String(d.getDate()).padStart(2, '0');
-            const mm = String(d.getMonth() + 1).padStart(2, '0');
-            return dd + '/' + mm;
         }
 
         if (action === 'salles') {
@@ -343,26 +237,21 @@ module.exports.usagectl = function (parent) {
                         byMesh[n.meshid].push(n);
                     });
                     const meshIds = Object.keys(byMesh);
-                    const meshTotals = {};   // meshid -> { totalOn, nodes, nodesWithData }
-                    meshIds.forEach((mid) => { meshTotals[mid] = { totalOn: 0, nodes: byMesh[mid].length, nodesWithData: 0 }; });
+                    const meshTotals = {};   // meshid -> { totalOn, nodes }
+                    meshIds.forEach((mid) => { meshTotals[mid] = { totalOn: 0, nodes: byMesh[mid].length }; });
                     const allNodes = (nodes || []).filter((n) => n && n._id && n.meshid);
                     let idx = 0;
                     let aborted = false;
                     function nextNode() {
                         if (aborted) return;
                         if (idx >= allNodes.length) {
-                            const out = meshIds.map((mid) => {
-                                const t = meshTotals[mid];
-                                const denomNodes = t.nodesWithData || t.nodes;
-                                return {
-                                    meshid: mid,
-                                    name: meshById[mid] || mid,
-                                    nodes: t.nodes,
-                                    nodesWithData: t.nodesWithData,
-                                    avgOnPct: denomNodes ? Math.round(((t.totalOn / (denomNodes * totalMs)) * 100) * 10) / 10 : 0,
-                                    avgOnMinutes: denomNodes ? Math.round(t.totalOn / denomNodes / 60000) : 0,
-                                };
-                            });
+                            const out = meshIds.map((mid) => ({
+                                meshid: mid,
+                                name: meshById[mid] || mid,
+                                nodes: meshTotals[mid].nodes,
+                                avgOnPct: meshTotals[mid].nodes ? Math.round(((meshTotals[mid].totalOn / (meshTotals[mid].nodes * totalMs)) * 100) * 10) / 10 : 0,
+                                avgOnMinutes: meshTotals[mid].nodes ? Math.round(meshTotals[mid].totalOn / meshTotals[mid].nodes / 60000) : 0,
+                            }));
                             out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
                             return sendJson(res, 200, { salles: out, days: days, totalMinutes: Math.round(totalMs / 60000), weekMode: weekMode, weekLabel: weekLabel });
                         }
@@ -380,11 +269,8 @@ module.exports.usagectl = function (parent) {
                                 done = true;
                                 clearTimeout(guard);
                                 try {
-                                    const r = computeOnTimeMs(ev || [], start, now, windows);
-                                    if (meshTotals[n.meshid]) {
-                                        meshTotals[n.meshid].totalOn += r.on;
-                                        if (r.hasData) meshTotals[n.meshid].nodesWithData += 1;
-                                    }
+                                    const on = computeOnTimeMs(ev || [], start, now, windows);
+                                    if (meshTotals[n.meshid]) meshTotals[n.meshid].totalOn += on;
                                 } catch (_) {}
                                 setImmediate(nextNode);
                             });
@@ -429,14 +315,13 @@ module.exports.usagectl = function (parent) {
                             if (done) return;
                             done = true;
                             clearTimeout(guard);
-                            const r = computeOnTimeMs(ev || [], start, now, windows);
+                            const on = computeOnTimeMs(ev || [], start, now, windows);
                             out.push({
                                 id: n._id,
                                 name: n.name || n._id,
                                 os: n.osdesc || '',
-                                onPct: r.hasData ? Math.round((r.on / totalMs * 100) * 10) / 10 : null,
-                                onMinutes: r.hasData ? Math.round(r.on / 60000) : null,
-                                hasData: r.hasData,
+                                onPct: Math.round((on / totalMs * 100) * 10) / 10,
+                                onMinutes: Math.round(on / 60000),
                             });
                             setImmediate(nextNode);
                         });
