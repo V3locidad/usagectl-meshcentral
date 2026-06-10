@@ -101,10 +101,10 @@ module.exports.usagectl = function (parent) {
 
     // Durée allumée (power=1) dans [start, end], restreinte aux créneaux
     // scolaires (Lun-Ven 8h-18h). Si windows est null → mode 24/7.
+    // Renvoie { on, hasData } pour distinguer "pas de donnée" (rétention MC
+    // trop courte / poste jamais vu) de "était éteint".
     function computeOnTimeMs(events, start, end, windows) {
         let on = 0;
-        let curState = null;
-        let curStart = start;
         events.sort(function (a, b) {
             const ta = (a.time instanceof Date) ? a.time.getTime() : Number(a.time);
             const tb = (b.time instanceof Date) ? b.time.getTime() : Number(b.time);
@@ -114,19 +114,44 @@ module.exports.usagectl = function (parent) {
             if (to <= from) return;
             on += windows ? intersectSum(from, to, windows) : (to - from);
         }
+        // Normalise les events utiles.
+        const norm = [];
         for (let i = 0; i < events.length; i++) {
             const e = events[i];
             const t = (e.time instanceof Date) ? e.time.getTime() : Number(e.time);
             const p = (e.power !== undefined) ? Number(e.power) : Number(e.p);
             if (isNaN(t) || isNaN(p)) continue;
-            if (t < start) { curState = p; continue; }
-            if (t > end) break;
-            if (curState === 1) add(curStart, t);
-            curState = p;
-            curStart = t;
+            norm.push({ t: t, p: p });
+        }
+        // 1) seed = dernier event power AVANT start (si dispo)
+        let seededState = null;
+        let firstInRangeIdx = -1;
+        for (let i = 0; i < norm.length; i++) {
+            if (norm[i].t < start) { seededState = norm[i].p; continue; }
+            firstInRangeIdx = i;
+            break;
+        }
+        // 2) si pas de seed mais au moins un event dans la fenêtre, on infère :
+        //    un 1er event power=1 signifie qu'avant le poste était à 0 (et inversement).
+        let curState = seededState;
+        let curStart = start;
+        if (curState === null && firstInRangeIdx >= 0) {
+            curState = (norm[firstInRangeIdx].p === 1) ? 0 : 1;
+        }
+        // 3) traite les events dans [start, end]
+        if (firstInRangeIdx >= 0) {
+            for (let i = firstInRangeIdx; i < norm.length; i++) {
+                const t = norm[i].t;
+                const p = norm[i].p;
+                if (t > end) break;
+                if (curState === 1) add(curStart, t);
+                curState = p;
+                curStart = t;
+            }
         }
         if (curState === 1) add(curStart, end);
-        return on;
+        const hasData = (seededState !== null) || (firstInRangeIdx >= 0);
+        return { on: on, hasData: hasData };
     }
 
     obj.handleAdminReq = function (req, res, user) {
@@ -141,6 +166,42 @@ module.exports.usagectl = function (parent) {
         if (!action) return res.render(path.join(__dirname, 'views/usagectl'), { user: user });
 
         if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl' });
+
+        if (action === 'debugWeek') {
+            // Diagnostic d'une semaine pour un nodeId : counts d'events, seed,
+            // 1er/dernier event, échantillon. Utiliser avec ?nodeId=X&weekStart=YYYY-MM-DD
+            const nodeId = String(req.query.nodeId || '');
+            const ws = String(req.query.weekStart || '');
+            if (!nodeId || !/^\d{4}-\d{2}-\d{2}$/.test(ws)) return sendJson(res, 400, { error: 'nodeId et weekStart=YYYY-MM-DD requis' });
+            const p = ws.split('-').map(Number);
+            const d = new Date(p[0], p[1] - 1, p[2], 0, 0, 0, 0);
+            const dow = d.getDay();
+            d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
+            const monMs = d.getTime();
+            const endDate = new Date(d); endDate.setDate(endDate.getDate() + 5);
+            const endMs = endDate.getTime();
+            const db = obj.meshServer.db;
+            const coll = db.powerfile || db.eventsfile;
+            if (!coll) return sendJson(res, 500, { error: 'powerfile absent' });
+            _runFind(coll, { nodeid: nodeId, time: { $lt: new Date(monMs) } }, { time: -1 }, 3, function (e1, before) {
+                _runFind(coll, { nodeid: nodeId, time: { $gte: new Date(monMs), $lt: new Date(endMs) } }, { time: 1 }, 0, function (e2, inrange) {
+                    _runFind(coll, { nodeid: nodeId }, null, 0, function (e3, all) {
+                        const summarize = (arr) => (arr || []).map((e) => ({ time: e.time, power: e.power != null ? e.power : e.p }));
+                        sendJson(res, 200, {
+                            nodeId: nodeId,
+                            weekStart: new Date(monMs).toISOString(),
+                            weekEnd: new Date(endMs).toISOString(),
+                            seedBefore: { count: (before || []).length, sample: summarize(before).slice(0, 3) },
+                            inRange: { count: (inrange || []).length, first: summarize(inrange).slice(0, 1), last: summarize((inrange || []).slice(-1)) },
+                            totalForNode: (all || []).length,
+                            allSample: summarize(all).slice(0, 5),
+                            errors: { seed: e1 && e1.message, range: e2 && e2.message, all: e3 && e3.message },
+                        });
+                    });
+                });
+            });
+            return;
+        }
 
         if (action === 'debug') {
             // Inspecte ce qui est exposé par MC pour la power timeline et
@@ -264,21 +325,26 @@ module.exports.usagectl = function (parent) {
                         byMesh[n.meshid].push(n);
                     });
                     const meshIds = Object.keys(byMesh);
-                    const meshTotals = {};   // meshid -> { totalOn, nodes }
-                    meshIds.forEach((mid) => { meshTotals[mid] = { totalOn: 0, nodes: byMesh[mid].length }; });
+                    const meshTotals = {};   // meshid -> { totalOn, nodes, nodesWithData }
+                    meshIds.forEach((mid) => { meshTotals[mid] = { totalOn: 0, nodes: byMesh[mid].length, nodesWithData: 0 }; });
                     const allNodes = (nodes || []).filter((n) => n && n._id && n.meshid);
                     let idx = 0;
                     let aborted = false;
                     function nextNode() {
                         if (aborted) return;
                         if (idx >= allNodes.length) {
-                            const out = meshIds.map((mid) => ({
-                                meshid: mid,
-                                name: meshById[mid] || mid,
-                                nodes: meshTotals[mid].nodes,
-                                avgOnPct: meshTotals[mid].nodes ? Math.round(((meshTotals[mid].totalOn / (meshTotals[mid].nodes * totalMs)) * 100) * 10) / 10 : 0,
-                                avgOnMinutes: meshTotals[mid].nodes ? Math.round(meshTotals[mid].totalOn / meshTotals[mid].nodes / 60000) : 0,
-                            }));
+                            const out = meshIds.map((mid) => {
+                                const t = meshTotals[mid];
+                                const denomNodes = t.nodesWithData || t.nodes;
+                                return {
+                                    meshid: mid,
+                                    name: meshById[mid] || mid,
+                                    nodes: t.nodes,
+                                    nodesWithData: t.nodesWithData,
+                                    avgOnPct: denomNodes ? Math.round(((t.totalOn / (denomNodes * totalMs)) * 100) * 10) / 10 : 0,
+                                    avgOnMinutes: denomNodes ? Math.round(t.totalOn / denomNodes / 60000) : 0,
+                                };
+                            });
                             out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
                             return sendJson(res, 200, { salles: out, days: days, totalMinutes: Math.round(totalMs / 60000), weekMode: weekMode, weekLabel: weekLabel });
                         }
@@ -296,8 +362,11 @@ module.exports.usagectl = function (parent) {
                                 done = true;
                                 clearTimeout(guard);
                                 try {
-                                    const on = computeOnTimeMs(ev || [], start, now, windows);
-                                    if (meshTotals[n.meshid]) meshTotals[n.meshid].totalOn += on;
+                                    const r = computeOnTimeMs(ev || [], start, now, windows);
+                                    if (meshTotals[n.meshid]) {
+                                        meshTotals[n.meshid].totalOn += r.on;
+                                        if (r.hasData) meshTotals[n.meshid].nodesWithData += 1;
+                                    }
                                 } catch (_) {}
                                 setImmediate(nextNode);
                             });
@@ -342,13 +411,14 @@ module.exports.usagectl = function (parent) {
                             if (done) return;
                             done = true;
                             clearTimeout(guard);
-                            const on = computeOnTimeMs(ev || [], start, now, windows);
+                            const r = computeOnTimeMs(ev || [], start, now, windows);
                             out.push({
                                 id: n._id,
                                 name: n.name || n._id,
                                 os: n.osdesc || '',
-                                onPct: Math.round((on / totalMs * 100) * 10) / 10,
-                                onMinutes: Math.round(on / 60000),
+                                onPct: r.hasData ? Math.round((r.on / totalMs * 100) * 10) / 10 : null,
+                                onMinutes: r.hasData ? Math.round(r.on / 60000) : null,
+                                hasData: r.hasData,
                             });
                             setImmediate(nextNode);
                         });

@@ -149,12 +149,14 @@
                + '<th style="width:220px">Heures moy./poste (/ ' + totalLabel + ')</th>'
                + '</tr></thead><tbody>';
       salles.forEach(function (s) {
+        var noData = (s.nodesWithData === 0);
+        var postesLabel = s.nodes + (s.nodesWithData != null && s.nodesWithData < s.nodes ? ' <span style="color:#aaa;font-size:11px">(' + s.nodesWithData + ' avec data)</span>' : '');
         html += '<tr class="clickable" data-meshid="' + escapeHtml(s.meshid) + '">'
               + '<td>' + escapeHtml(s.name) + '</td>'
-              + '<td>' + s.nodes + '</td>'
-              + '<td>' + occBar(s.avgOnPct) + '</td>'
-              + '<td class="occLabel">' + s.avgOnPct + ' %</td>'
-              + '<td>' + formatHm(s.avgOnMinutes) + ' / ' + totalLabel + '</td>'
+              + '<td>' + postesLabel + '</td>'
+              + '<td>' + (noData ? '<span style="color:#aaa;font-size:11px">pas de données</span>' : occBar(s.avgOnPct)) + '</td>'
+              + '<td class="occLabel">' + (noData ? '—' : (s.avgOnPct + ' %')) + '</td>'
+              + '<td>' + (noData ? '—' : (formatHm(s.avgOnMinutes) + ' / ' + totalLabel)) + '</td>'
               + '</tr>';
       });
       html += '</tbody></table>';
@@ -189,12 +191,13 @@
               + '<th style="width:220px">Heures (/ ' + totalLabel + ')</th>'
               + '</tr></thead><tbody>';
         nodes.forEach(function (n) {
+          var hasData = (n.hasData !== false) && (n.onPct !== null);
           html += '<tr>'
                 + '<td>' + escapeHtml(n.name) + '</td>'
                 + '<td style="font-size:11px;color:#666">' + escapeHtml(n.os) + '</td>'
-                + '<td>' + occBar(n.onPct) + '</td>'
-                + '<td class="occLabel">' + n.onPct + ' %</td>'
-                + '<td>' + formatHm(n.onMinutes) + ' / ' + totalLabel + '</td>'
+                + '<td>' + (hasData ? occBar(n.onPct) : '<span style="color:#aaa;font-size:11px">pas de données</span>') + '</td>'
+                + '<td class="occLabel">' + (hasData ? (n.onPct + ' %') : '—') + '</td>'
+                + '<td>' + (hasData ? (formatHm(n.onMinutes) + ' / ' + totalLabel) : '—') + '</td>'
                 + '</tr>';
         });
         html += '</tbody></table>';
