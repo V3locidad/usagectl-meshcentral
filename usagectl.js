@@ -142,6 +142,21 @@ module.exports.usagectl = function (parent) {
 
         if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl' });
 
+        if (action === 'dataRange') {
+            // Renvoie la plage temporelle réelle des events power, pour que
+            // l'UI sache quelles semaines on peut effectivement calculer.
+            const db = obj.meshServer.db;
+            const coll = db.powerfile || db.eventsfile;
+            if (!coll) return sendJson(res, 200, { min: null, max: null });
+            if (typeof coll.aggregate !== 'function') return sendJson(res, 200, { min: null, max: null });
+            const pipe = [{ $group: { _id: null, min: { $min: '$time' }, max: { $max: '$time' } } }];
+            Promise.resolve(coll.aggregate(pipe).toArray()).then((r) => {
+                const row = (r && r[0]) || {};
+                sendJson(res, 200, { min: row.min || null, max: row.max || null });
+            }).catch((e) => sendJson(res, 500, { error: e.message }));
+            return;
+        }
+
         if (action === 'dbStats') {
             // Agrégations directes sur powerfile (Mongo) : total, plage de
             // dates, count par jour sur les 30 derniers jours, top nodes.

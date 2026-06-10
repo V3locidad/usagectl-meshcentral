@@ -92,26 +92,46 @@
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function fmtDM(d) { return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); }
   function fmtIsoDate(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
-  function buildWeekOptions() {
+  function buildWeekOptions(dataMinMs) {
     var sel = $('weekSel');
     sel.innerHTML = '';
     var today = new Date(); today.setHours(0, 0, 0, 0);
     var dow = today.getDay(); // 0=dim
     var mondayCurrent = new Date(today);
     mondayCurrent.setDate(mondayCurrent.getDate() + (dow === 0 ? -6 : 1 - dow));
+    var any = false;
     for (var i = 0; i < 10; i++) {
       var mon = new Date(mondayCurrent);
       mon.setDate(mon.getDate() - i * 7);
       var fri = new Date(mon); fri.setDate(fri.getDate() + 4);
+      // Si la fin de la semaine est avant la 1re donnée, on grise.
+      var endOfWeek = new Date(mon); endOfWeek.setDate(endOfWeek.getDate() + 5);
+      var noData = (dataMinMs && endOfWeek.getTime() <= dataMinMs);
       var label = (i === 0 ? 'Semaine en cours' : (i === 1 ? 'Semaine dernière' : 'Il y a ' + i + ' semaines'))
-                  + ' — Lun ' + fmtDM(mon) + ' → Ven ' + fmtDM(fri);
+                  + ' — Lun ' + fmtDM(mon) + ' → Ven ' + fmtDM(fri)
+                  + (noData ? '  (pas de données)' : '');
       var opt = document.createElement('option');
       opt.value = fmtIsoDate(mon);
       opt.textContent = label;
+      if (noData) opt.disabled = true;
+      else any = true;
       sel.appendChild(opt);
     }
+    return any;
   }
-  buildWeekOptions();
+
+  // Initial : récupère la plage de données pour griser les semaines non couvertes.
+  api('dataRange').then(function (r) {
+    var dataMin = r && r.min ? new Date(r.min).getTime() : null;
+    buildWeekOptions(dataMin);
+    if (dataMin) {
+      var d = new Date(dataMin);
+      var info = document.createElement('span');
+      info.style.cssText = 'font-size:11px;color:#888;margin-left:8px';
+      info.textContent = 'données depuis ' + pad(d.getDate()) + '/' + pad(d.getMonth()+1) + '/' + d.getFullYear();
+      $('weekWrap').appendChild(info);
+    }
+  }).catch(function () { buildWeekOptions(null); });
 
   function getQuery() {
     if ($('modeSel').value === 'week') {
