@@ -24,33 +24,40 @@ module.exports.usagectl = function (parent) {
     obj.meshServer = parent.parent;
     obj.exports = [];
 
+    function _runFind(coll, query, sortSpec, limit, cb) {
+        try {
+            let cur = coll.find(query);
+            if (sortSpec && typeof cur.sort === 'function') cur = cur.sort(sortSpec);
+            if (limit && typeof cur.limit === 'function') cur = cur.limit(limit);
+            const arr = cur.toArray();
+            if (arr && typeof arr.then === 'function') {
+                arr.then(function (docs) { try { cb(null, docs || []); } catch (_) {} },
+                         function (err) { try { cb(err, []); } catch (_) {} });
+            } else {
+                try { cur.toArray(function (err, docs) { try { cb(err, docs || []); } catch (_) {} }); }
+                catch (e) { try { cb(e, []); } catch (_) {} }
+            }
+        } catch (e) { try { cb(e, []); } catch (_) {} }
+    }
+
+    // Récupère :
+    //  - le dernier event power *avant* oldestTime (pour seed curState)
+    //  - les events power dans [oldestTime, +∞[
+    // Concatène le seed en tête (curStart sera correctement initialisé).
     function getPowerTimeline(nodeId, oldestTime, cb) {
-        // Power events stockés dans db.powerfile (collection 'power' séparée
-        // de 'events'). Query directe pour éviter db.getPowerTimeline qui
-        // crash MC dans ce setup.
         try {
             const db = obj.meshServer && obj.meshServer.db;
             const coll = db && (db.powerfile || db.eventsfile);
             if (!coll || typeof coll.find !== 'function') {
                 return cb(new Error('db.powerfile indisponible'), []);
             }
-            // powerfile : { nodeid, time:Date, power }. MongoDB compare
-            // Date $gte Number = jamais match → toujours filtrer avec Date.
-            const q = { nodeid: nodeId, time: { $gte: new Date(oldestTime) } };
-            const cur = coll.find(q);
-            // Tri par time croissant si l'API le permet.
-            const sorted = (typeof cur.sort === 'function') ? cur.sort({ time: 1 }) : cur;
-            const toArr = sorted.toArray();
-            // toArr peut être Promise (mongo 4+) ou void avec callback (NeDB).
-            if (toArr && typeof toArr.then === 'function') {
-                toArr.then(function (docs) { try { cb(null, docs || []); } catch (_) {} },
-                           function (err) { try { cb(err, []); } catch (_) {} });
-            } else {
-                // Fallback NeDB-style : on essaie de re-call avec callback.
-                try {
-                    sorted.toArray(function (err, docs) { try { cb(err, docs || []); } catch (_) {} });
-                } catch (e) { try { cb(e, []); } catch (_) {} }
-            }
+            const oldestDate = new Date(oldestTime);
+            _runFind(coll, { nodeid: nodeId, time: { $lt: oldestDate } }, { time: -1 }, 1, function (e1, seed) {
+                _runFind(coll, { nodeid: nodeId, time: { $gte: oldestDate } }, { time: 1 }, 0, function (e2, recent) {
+                    const out = (seed || []).concat(recent || []);
+                    cb(e2 || e1 || null, out);
+                });
+            });
         } catch (e) {
             try { cb(e, []); } catch (_) {}
         }
