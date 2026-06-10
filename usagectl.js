@@ -40,6 +40,13 @@ module.exports.usagectl = function (parent) {
         } catch (e) { try { cb(e, []); } catch (_) {} }
     }
 
+    // MeshCentral stocke nodeid avec préfixe "node//" dans powerfile, mais
+    // les _id dans la collection 'node' sont sans préfixe. On normalise.
+    function powerNodeId(nodeId) {
+        const s = String(nodeId || '');
+        return s.indexOf('node//') === 0 ? s : ('node//' + s);
+    }
+
     // Récupère :
     //  - le dernier event power *avant* oldestTime (pour seed curState)
     //  - les events power dans [oldestTime, +∞[
@@ -52,8 +59,9 @@ module.exports.usagectl = function (parent) {
                 return cb(new Error('db.powerfile indisponible'), []);
             }
             const oldestDate = new Date(oldestTime);
-            _runFind(coll, { nodeid: nodeId, time: { $lt: oldestDate } }, { time: -1 }, 1, function (e1, seed) {
-                _runFind(coll, { nodeid: nodeId, time: { $gte: oldestDate } }, { time: 1 }, 0, function (e2, recent) {
+            const nid = powerNodeId(nodeId);
+            _runFind(coll, { nodeid: nid, time: { $lt: oldestDate } }, { time: -1 }, 1, function (e1, seed) {
+                _runFind(coll, { nodeid: nid, time: { $gte: oldestDate } }, { time: 1 }, 0, function (e2, recent) {
                     const out = (seed || []).concat(recent || []);
                     cb(e2 || e1 || null, out);
                 });
@@ -183,9 +191,9 @@ module.exports.usagectl = function (parent) {
             const db = obj.meshServer.db;
             const coll = db.powerfile || db.eventsfile;
             if (!coll) return sendJson(res, 500, { error: 'powerfile absent' });
-            _runFind(coll, { nodeid: nodeId, time: { $lt: new Date(monMs) } }, { time: -1 }, 3, function (e1, before) {
-                _runFind(coll, { nodeid: nodeId, time: { $gte: new Date(monMs), $lt: new Date(endMs) } }, { time: 1 }, 0, function (e2, inrange) {
-                    _runFind(coll, { nodeid: nodeId }, null, 0, function (e3, all) {
+            _runFind(coll, { nodeid: powerNodeId(nodeId), time: { $lt: new Date(monMs) } }, { time: -1 }, 3, function (e1, before) {
+                _runFind(coll, { nodeid: powerNodeId(nodeId), time: { $gte: new Date(monMs), $lt: new Date(endMs) } }, { time: 1 }, 0, function (e2, inrange) {
+                    _runFind(coll, { nodeid: powerNodeId(nodeId) }, null, 0, function (e3, all) {
                         // Sonde sans filtre nodeid pour identifier le format exact
                         // stocké dans powerfile.
                         _runFind(coll, {}, null, 5, function (e4, anySample) {
@@ -227,8 +235,8 @@ module.exports.usagectl = function (parent) {
             const queries = [
                 { coll: 'powerfile', label: 'powerfile sample', q: {}, limit: 5 },
                 { coll: 'powerfile', label: 'powerfile nodeid=X', q: { nodeid: nodeId }, limit: 5 },
-                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(ms)', q: { nodeid: nodeId, time: { $gte: oldest } }, limit: 5 },
-                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(date)', q: { nodeid: nodeId, time: { $gte: new Date(oldest) } }, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(ms)', q: { nodeid: powerNodeId(nodeId), time: { $gte: oldest } }, limit: 5 },
+                { coll: 'powerfile', label: 'powerfile nodeid=X time>=oldest(date)', q: { nodeid: powerNodeId(nodeId), time: { $gte: new Date(oldest) } }, limit: 5 },
             ];
             info.tries = [];
             let qi = 0;
