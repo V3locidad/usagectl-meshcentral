@@ -1,7 +1,7 @@
 {
   "name": "usagectl",
   "shortName": "usagectl",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "author": "V3locidad",
   "description": "Taux d'occupation par salle et par poste : sélection d'une semaine précise (Lun-Ven 8h-18h) sur 10 semaines de rétention, ou période glissante. Basé sur la power timeline MeshCentral.",
   "hasAdminPanel": true,

@@ -24,6 +24,13 @@ module.exports.usagectl = function (parent) {
     obj.meshServer = parent.parent;
     obj.exports = [];
 
+    // MeshCentral stocke powerfile.nodeid avec le préfixe "node//".
+    // node._id selon les versions MC est soit avec, soit sans. On normalise.
+    function powerNodeId(nodeId) {
+        const s = String(nodeId || '');
+        return s.indexOf('node//') === 0 ? s : ('node//' + s);
+    }
+
     function getPowerTimeline(nodeId, oldestTime, cb) {
         // Power events stockés dans db.powerfile (collection 'power' séparée
         // de 'events'). Query directe pour éviter db.getPowerTimeline qui
@@ -36,7 +43,7 @@ module.exports.usagectl = function (parent) {
             }
             // powerfile : { nodeid, time:Date, power }. MongoDB compare
             // Date $gte Number = jamais match → toujours filtrer avec Date.
-            const q = { nodeid: nodeId, time: { $gte: new Date(oldestTime) } };
+            const q = { nodeid: powerNodeId(nodeId), time: { $gte: new Date(oldestTime) } };
             const cur = coll.find(q);
             // Tri par time croissant si l'API le permet.
             const sorted = (typeof cur.sort === 'function') ? cur.sort({ time: 1 }) : cur;
@@ -134,6 +141,61 @@ module.exports.usagectl = function (parent) {
         if (!action) return res.render(path.join(__dirname, 'views/usagectl'), { user: user });
 
         if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl' });
+
+        if (action === 'inspectDb') {
+            // Diagnostic ciblé : pour les 3 premiers nodes, montre leur _id
+            // tel que stocké, l'ID qu'on enverrait dans la query powerfile
+            // (avec normalisation), le count d'events qu'elle ramène, et un
+            // échantillon de docs du powerfile sans filtre.
+            const db = obj.meshServer.db;
+            const coll = db.powerfile || db.eventsfile;
+            if (!coll) return sendJson(res, 500, { error: 'powerfile absent', dbType: db.databaseType });
+            db.GetAllType('node', function (eN, nodes) {
+                if (eN) return sendJson(res, 500, { error: eN.message });
+                const sampleNodes = (nodes || []).filter((n) => n && n._id).slice(0, 3);
+                const out = { dbType: db.databaseType, coll: db.powerfile ? 'powerfile' : 'eventsfile', nodes: [] };
+                // Sample powerfile
+                let cur = coll.find({});
+                if (typeof cur.limit === 'function') cur = cur.limit(5);
+                const arr = cur.toArray();
+                function gotSample(sample) {
+                    out.powerfileSample = (sample || []).map((e) => ({ nodeid: e.nodeid, time: e.time, power: e.power != null ? e.power : e.p, keys: Object.keys(e) }));
+                    let i = 0;
+                    function nextN() {
+                        if (i >= sampleNodes.length) return sendJson(res, 200, out);
+                        const n = sampleNodes[i++];
+                        const idAsIs = n._id;
+                        const idNormalized = powerNodeId(n._id);
+                        // 2 queries en parallèle : as-is et normalisé
+                        let cur1 = coll.find({ nodeid: idAsIs });
+                        if (typeof cur1.limit === 'function') cur1 = cur1.limit(1);
+                        const p1 = cur1.toArray();
+                        let cur2 = coll.find({ nodeid: idNormalized });
+                        if (typeof cur2.limit === 'function') cur2 = cur2.limit(1);
+                        const p2 = cur2.toArray();
+                        Promise.all([
+                            (p1 && p1.then) ? p1 : Promise.resolve([]),
+                            (p2 && p2.then) ? p2 : Promise.resolve([]),
+                        ]).then(function (r) {
+                            out.nodes.push({
+                                _id_in_node_collection: idAsIs,
+                                _id_normalized_for_powerfile: idNormalized,
+                                matches_as_is: (r[0] || []).length,
+                                matches_normalized: (r[1] || []).length,
+                            });
+                            nextN();
+                        }).catch(function (e) {
+                            out.nodes.push({ _id_in_node_collection: idAsIs, error: e.message });
+                            nextN();
+                        });
+                    }
+                    nextN();
+                }
+                if (arr && typeof arr.then === 'function') arr.then(gotSample, function () { gotSample([]); });
+                else gotSample([]);
+            });
+            return;
+        }
 
         if (action === 'debug') {
             // Inspecte ce qui est exposé par MC pour la power timeline et
