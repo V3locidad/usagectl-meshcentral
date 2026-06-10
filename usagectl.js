@@ -142,6 +142,65 @@ module.exports.usagectl = function (parent) {
 
         if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl' });
 
+        if (action === 'dbStats') {
+            // Agrégations directes sur powerfile (Mongo) : total, plage de
+            // dates, count par jour sur les 30 derniers jours, top nodes.
+            const db = obj.meshServer.db;
+            const coll = db.powerfile || db.eventsfile;
+            if (!coll) return sendJson(res, 500, { error: 'powerfile absent' });
+            const out = { dbType: db.databaseType };
+            // 1) total
+            let totalP;
+            if (typeof coll.estimatedDocumentCount === 'function') {
+                totalP = coll.estimatedDocumentCount();
+            } else if (typeof coll.countDocuments === 'function') {
+                totalP = coll.countDocuments({});
+            } else {
+                totalP = coll.find({}).toArray().then((a) => a.length);
+            }
+            Promise.resolve(totalP).then((total) => {
+                out.totalEvents = total;
+                // 2) min/max time
+                if (typeof coll.aggregate === 'function') {
+                    const pipe = [{ $group: { _id: null, min: { $min: '$time' }, max: { $max: '$time' } } }];
+                    return Promise.resolve(coll.aggregate(pipe).toArray()).then((r) => {
+                        out.timeRange = (r && r[0]) ? { min: r[0].min, max: r[0].max } : null;
+                        // 3) per-day count last 30 days
+                        const since = new Date(Date.now() - 30 * 86400000);
+                        const pipe2 = [
+                            { $match: { time: { $gte: since } } },
+                            { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$time' } }, n: { $sum: 1 } } },
+                            { $sort: { _id: -1 } },
+                            { $limit: 30 },
+                        ];
+                        return Promise.resolve(coll.aggregate(pipe2).toArray()).then((r2) => {
+                            out.eventsPerDayLast30 = (r2 || []).map((x) => ({ day: x._id, count: x.n }));
+                            // 4) top nodes (most events)
+                            const pipe3 = [
+                                { $group: { _id: '$nodeid', n: { $sum: 1 } } },
+                                { $sort: { n: -1 } },
+                                { $limit: 10 },
+                            ];
+                            return Promise.resolve(coll.aggregate(pipe3).toArray()).then((r3) => {
+                                out.topNodes = (r3 || []).map((x) => ({ nodeid: x._id, count: x.n }));
+                                // 5) Compte les events DANS la fenêtre 25/05 → 30/05 (semaine du test)
+                                return Promise.resolve(coll.countDocuments({
+                                    time: { $gte: new Date('2026-05-25T00:00:00Z'), $lt: new Date('2026-05-30T00:00:00Z') }
+                                })).then((c) => {
+                                    out.countInTestWeek = c;
+                                    sendJson(res, 200, out);
+                                });
+                            });
+                        });
+                    });
+                } else {
+                    out.warning = 'pas d\'API aggregate sur cette collection';
+                    sendJson(res, 200, out);
+                }
+            }).catch((e) => sendJson(res, 500, { error: e.message, partial: out }));
+            return;
+        }
+
         if (action === 'inspectDb') {
             // Diagnostic ciblé : pour les 3 premiers nodes, montre leur _id
             // tel que stocké, l'ID qu'on enverrait dans la query powerfile
