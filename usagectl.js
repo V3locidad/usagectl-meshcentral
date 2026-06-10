@@ -186,16 +186,26 @@ module.exports.usagectl = function (parent) {
             _runFind(coll, { nodeid: nodeId, time: { $lt: new Date(monMs) } }, { time: -1 }, 3, function (e1, before) {
                 _runFind(coll, { nodeid: nodeId, time: { $gte: new Date(monMs), $lt: new Date(endMs) } }, { time: 1 }, 0, function (e2, inrange) {
                     _runFind(coll, { nodeid: nodeId }, null, 0, function (e3, all) {
-                        const summarize = (arr) => (arr || []).map((e) => ({ time: e.time, power: e.power != null ? e.power : e.p }));
-                        sendJson(res, 200, {
-                            nodeId: nodeId,
-                            weekStart: new Date(monMs).toISOString(),
-                            weekEnd: new Date(endMs).toISOString(),
-                            seedBefore: { count: (before || []).length, sample: summarize(before).slice(0, 3) },
-                            inRange: { count: (inrange || []).length, first: summarize(inrange).slice(0, 1), last: summarize((inrange || []).slice(-1)) },
-                            totalForNode: (all || []).length,
-                            allSample: summarize(all).slice(0, 5),
-                            errors: { seed: e1 && e1.message, range: e2 && e2.message, all: e3 && e3.message },
+                        // Sonde sans filtre nodeid pour identifier le format exact
+                        // stocké dans powerfile.
+                        _runFind(coll, {}, null, 5, function (e4, anySample) {
+                            const summarize = (arr) => (arr || []).map((e) => ({
+                                time: e.time, power: e.power != null ? e.power : e.p,
+                                nodeid: e.nodeid, nodeid_keys: Object.keys(e),
+                            }));
+                            sendJson(res, 200, {
+                                nodeId: nodeId,
+                                nodeIdShape: { length: nodeId.length, startsWithNode: nodeId.indexOf('node//') === 0 },
+                                weekStart: new Date(monMs).toISOString(),
+                                weekEnd: new Date(endMs).toISOString(),
+                                seedBefore: { count: (before || []).length, sample: summarize(before).slice(0, 3) },
+                                inRange: { count: (inrange || []).length, first: summarize(inrange).slice(0, 1), last: summarize((inrange || []).slice(-1)) },
+                                totalForNode: (all || []).length,
+                                allSample: summarize(all).slice(0, 5),
+                                anySample: summarize(anySample).slice(0, 5),
+                                collectionUsed: db.powerfile ? 'powerfile' : 'eventsfile',
+                                errors: { seed: e1 && e1.message, range: e2 && e2.message, all: e3 && e3.message, any: e4 && e4.message },
+                            });
                         });
                     });
                 });
