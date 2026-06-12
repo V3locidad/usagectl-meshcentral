@@ -258,11 +258,12 @@
       var postesLabel = s.nodes + (s.nodesWithData != null && s.nodesWithData < s.nodes ? ' <span style="color:#aaa;font-size:11px">(' + s.nodesWithData + ' data)</span>' : '');
       var deltaCell = '';
       if (showDelta) {
-        if (s.deltaPct == null) { deltaCell = '<td style="color:#aaa">—</td>'; }
+        if (s.deltaFromZero) { deltaCell = '<td class="delta-up" title="était à 0% la semaine précédente">↑ nouveau</td>'; }
+        else if (s.deltaRel == null) { deltaCell = '<td style="color:#aaa">—</td>'; }
         else {
-          var cls = (s.deltaPct > 0.1) ? 'delta-up' : (s.deltaPct < -0.1) ? 'delta-down' : 'delta-flat';
-          var arrow = (s.deltaPct > 0.1) ? '↑' : (s.deltaPct < -0.1) ? '↓' : '→';
-          deltaCell = '<td class="' + cls + '">' + arrow + ' ' + (s.deltaPct > 0 ? '+' : '') + s.deltaPct + ' pt</td>';
+          var cls = (s.deltaRel > 1) ? 'delta-up' : (s.deltaRel < -1) ? 'delta-down' : 'delta-flat';
+          var arrow = (s.deltaRel > 1) ? '↑' : (s.deltaRel < -1) ? '↓' : '→';
+          deltaCell = '<td class="' + cls + '" title="' + s.prevPct + ' % → ' + s.avgOnPct + ' %">' + arrow + ' ' + (s.deltaRel > 0 ? '+' : '') + s.deltaRel + ' %</td>';
         }
       }
       html += '<tr class="clickable" data-meshid="' + escapeHtml(s.meshid) + '">'
@@ -633,11 +634,12 @@
       var noData = (s.nodesWithData === 0);
       var deltaCell = '';
       if (showDelta) {
-        if (s.deltaPct == null) deltaCell = '<td class="muted">—</td>';
+        if (s.deltaFromZero) deltaCell = '<td class="delta-up">↑ nouveau</td>';
+        else if (s.deltaRel == null) deltaCell = '<td class="muted">—</td>';
         else {
-          var cls = (s.deltaPct > 0.1) ? 'delta-up' : (s.deltaPct < -0.1) ? 'delta-down' : 'delta-flat';
-          var arrow = (s.deltaPct > 0.1) ? '↑' : (s.deltaPct < -0.1) ? '↓' : '→';
-          deltaCell = '<td class="' + cls + '">' + arrow + ' ' + (s.deltaPct > 0 ? '+' : '') + s.deltaPct + ' pt</td>';
+          var cls = (s.deltaRel > 1) ? 'delta-up' : (s.deltaRel < -1) ? 'delta-down' : 'delta-flat';
+          var arrow = (s.deltaRel > 1) ? '↑' : (s.deltaRel < -1) ? '↓' : '→';
+          deltaCell = '<td class="' + cls + '">' + arrow + ' ' + (s.deltaRel > 0 ? '+' : '') + s.deltaRel + ' %</td>';
         }
       }
       html += '<tr><td><b>' + escapeHtml(s.name) + '</b></td>'

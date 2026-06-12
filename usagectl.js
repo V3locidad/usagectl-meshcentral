@@ -368,7 +368,15 @@ module.exports.usagectl = function (parent) {
                 salles.forEach(s => {
                     if (prevByMesh[s.meshid] != null) {
                         s.prevPct = prevByMesh[s.meshid];
-                        s.deltaPct = Math.round((s.avgOnPct - s.prevPct) * 10) / 10;
+                        // Variation relative en % (ex : 40% → 51% → +27.5%)
+                        if (s.prevPct > 0) {
+                            s.deltaRel = Math.round(((s.avgOnPct - s.prevPct) / s.prevPct * 100) * 10) / 10;
+                        } else if (s.avgOnPct > 0) {
+                            s.deltaRel = null; // partait de 0 → infini, on n'affiche rien
+                            s.deltaFromZero = true;
+                        } else {
+                            s.deltaRel = 0;
+                        }
                     }
                 });
             }
