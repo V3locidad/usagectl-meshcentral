@@ -75,7 +75,7 @@
   <span style="flex:1"></span>
   <button id="refreshBtn" class="primary">↻ Rafraîchir</button>
   <button id="forceBtn" title="Recalculer en ignorant le cache">⟳ Forcer</button>
-  <button id="csvBtn" title="Exporter la vue actuelle en CSV">📥 CSV</button>
+  <button id="pdfBtn" title="Exporter un rapport PDF (via Imprimer → Enregistrer au format PDF)">📄 Rapport PDF</button>
 </div>
 
 <div class="tabs">
@@ -467,33 +467,229 @@
     else if (currentTab === 'horsHeures') loadHorsHeures();
   };
 
-  // ====== Export CSV (vue courante) ======
-  $('csvBtn').onclick = function () {
-    var rows = [];
-    if (currentTab === 'salles' && lastSallesResult && !inDetail) {
-      rows.push(['Salle', 'Postes', 'Postes avec data', '% moyen', 'Heures moy/poste', 'Δ vs S-1 (pt)']);
-      (lastSallesResult.salles || []).forEach(function (s) {
-        rows.push([s.name, s.nodes, s.nodesWithData, s.avgOnPct, formatHm(s.avgOnMinutes), s.deltaPct != null ? s.deltaPct : '']);
+  // ====== Export PDF (rapport complet) ======
+  $('pdfBtn').onclick = function () { buildAndOpenReport(); };
+
+  function buildAndOpenReport() {
+    if (!isWeekMode()) {
+      if (!lastSallesResult) { alert('Charge d\'abord la vue Salles.'); return; }
+      var html = reportHtmlRolling(lastSallesResult);
+      openPrintWindow(html);
+      return;
+    }
+    var btn = $('pdfBtn'); btn.disabled = true; btn.textContent = '⏳ Préparation…';
+    var q = getQuery();
+    Promise.all([
+      api('salles', q),
+      api('heatmap', Object.assign({ meshid: 'all' }, q)),
+      api('horsHeures', Object.assign({ meshid: 'all' }, q)),
+      api('topPostes', q),
+    ]).then(function (results) {
+      var html = reportHtmlWeek(results[0], results[1], results[2], results[3]);
+      openPrintWindow(html);
+    }).catch(function (e) {
+      alert('Erreur génération rapport: ' + e.message);
+    }).then(function () {
+      btn.disabled = false; btn.textContent = '📄 Rapport PDF';
+    });
+  }
+
+  function openPrintWindow(html) {
+    var w = window.open('', '_blank');
+    if (!w) { alert('Le navigateur a bloqué la fenêtre. Autorise les popups pour ce site.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    w.onload = function () { setTimeout(function () { w.focus(); w.print(); }, 300); };
+  }
+
+  function reportCss() {
+    return '@page { size: A4; margin: 14mm 12mm; }'
+         + '* { box-sizing: border-box; }'
+         + 'body { font-family: -apple-system, Segoe UI, Helvetica, sans-serif; color: #222; font-size: 11px; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }'
+         + '.cover { padding: 20mm 0 10mm 0; border-bottom: 3px solid #0d6efd; margin-bottom: 16px; }'
+         + '.cover h1 { margin: 0; font-size: 26px; color: #0d6efd; letter-spacing: -0.5px; }'
+         + '.cover .sub { font-size: 14px; color: #555; margin-top: 6px; }'
+         + '.cover .meta { font-size: 10px; color: #888; margin-top: 10px; }'
+         + 'h2 { color: #0d6efd; border-bottom: 1px solid #e0e0e0; padding-bottom: 4px; margin: 24px 0 10px 0; font-size: 15px; }'
+         + 'h3 { margin: 14px 0 6px 0; font-size: 12px; color: #444; }'
+         + '.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0 18px 0; }'
+         + '.kpi { background: #f6f8fa; border-left: 4px solid #0d6efd; padding: 10px 12px; border-radius: 2px; }'
+         + '.kpi .val { font-size: 22px; font-weight: 700; color: #0d6efd; line-height: 1.1; }'
+         + '.kpi .lbl { font-size: 9px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }'
+         + 'table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }'
+         + 'th, td { padding: 5px 8px; border-bottom: 1px solid #eee; text-align: left; font-size: 10px; }'
+         + 'th { background: #f6f8fa; font-weight: 700; color: #444; text-transform: uppercase; font-size: 9px; letter-spacing: 0.3px; }'
+         + 'tr:nth-child(even) td { background: #fafbfc; }'
+         + '.bar { display: inline-block; width: 100px; height: 10px; background: #eee; border-radius: 2px; overflow: hidden; vertical-align: middle; }'
+         + '.bar > span { display: block; height: 100%; }'
+         + '.bar.lvl0 > span { background: #d9534f; }'
+         + '.bar.lvl1 > span { background: #f39c12; }'
+         + '.bar.lvl2 > span { background: #2ecc40; }'
+         + '.bar.lvl3 > span { background: #2ecc40; }'
+         + '.page-break { page-break-before: always; }'
+         + '.avoid-break { page-break-inside: avoid; }'
+         + '.delta-up { color: #2ecc40; font-weight: 600; }'
+         + '.delta-down { color: #d9534f; font-weight: 600; }'
+         + '.delta-flat { color: #888; }'
+         + '.heat { border-collapse: separate; border-spacing: 3px; margin: 8px auto; }'
+         + '.heat th { background: transparent; font-size: 10px; color: #555; padding: 4px 6px; border: none; }'
+         + '.heat td { padding: 0; border: none; }'
+         + '.heat .c { width: 56px; height: 30px; color: #fff; font-weight: 700; font-size: 10px; text-align: center; line-height: 30px; border-radius: 2px; }'
+         + '.heat .empty-c { background: #eee; color: #aaa; }'
+         + '.legend { display: flex; align-items: center; gap: 8px; font-size: 9px; color: #666; margin-top: 6px; justify-content: center; }'
+         + '.legend .grad { display: inline-block; width: 200px; height: 10px; background: linear-gradient(90deg, rgb(46,204,60), rgb(243,156,60), rgb(217,83,60)); border-radius: 2px; }'
+         + '.two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }'
+         + '.footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 9px; color: #aaa; text-align: center; border-top: 1px solid #eee; padding-top: 3px; }'
+         + '.muted { color: #888; }';
+  }
+
+  function barCell(pct) {
+    var p = Math.max(0, Math.min(100, pct || 0));
+    var lvl = (p < 10) ? 0 : (p < 30) ? 1 : (p < 60) ? 2 : 3;
+    return '<span class="bar lvl' + lvl + '"><span style="width:' + p.toFixed(1) + '%"></span></span>';
+  }
+
+  function reportHtmlWeek(salles, heatmap, hors, top) {
+    var weekLabel = salles.weekLabel || '';
+    var totalDispo = formatHm(salles.totalMinutes || 0);
+    var sallesList = salles.salles || [];
+    var withDataTotal = sallesList.reduce(function (s, x) { return s + (x.nodesWithData || 0); }, 0);
+    var nodesTotal = sallesList.reduce(function (s, x) { return s + (x.nodes || 0); }, 0);
+    var avgGlobal = 0;
+    if (sallesList.length) {
+      var sum = sallesList.reduce(function (s, x) { return s + (x.avgOnPct || 0) * (x.nodesWithData || 0); }, 0);
+      avgGlobal = withDataTotal ? Math.round((sum / withDataTotal) * 10) / 10 : 0;
+    }
+    var horsAvg = 0;
+    if (hors && hors.nodes && hors.nodes.length) {
+      horsAvg = Math.round((hors.nodes.reduce(function (s, n) { return s + n.offPct; }, 0) / hors.nodes.length) * 10) / 10;
+    }
+    var now = new Date();
+    var nowLabel = pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+
+    var html = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Rapport usagectl — ' + escapeHtml(weekLabel) + '</title><style>' + reportCss() + '</style></head><body>';
+
+    // Cover
+    html += '<div class="cover">'
+          + '<h1>Taux d\'occupation des postes</h1>'
+          + '<div class="sub">' + escapeHtml(weekLabel) + ' — Lun-Ven 8h-18h (' + totalDispo + ' disponibles)</div>'
+          + '<div class="meta">Rapport généré le ' + nowLabel + ' · ' + sallesList.length + ' salles · ' + nodesTotal + ' postes</div>'
+          + '</div>';
+
+    // KPIs
+    html += '<div class="kpis">'
+          + '<div class="kpi"><div class="val">' + avgGlobal + ' %</div><div class="lbl">Occupation moyenne</div></div>'
+          + '<div class="kpi"><div class="val">' + sallesList.length + '</div><div class="lbl">Salles</div></div>'
+          + '<div class="kpi"><div class="val">' + withDataTotal + ' / ' + nodesTotal + '</div><div class="lbl">Postes avec données</div></div>'
+          + '<div class="kpi"><div class="val">' + horsAvg + ' %</div><div class="lbl">Gaspillage moyen (hors heures)</div></div>'
+          + '</div>';
+
+    // Salles table
+    html += '<h2>Détail par salle</h2>';
+    var showDelta = salles.prevWeekAvailable;
+    html += '<table><thead><tr><th>Salle</th><th style="width:55px">Postes</th><th style="width:120px">Taux moyen</th><th style="width:60px">%</th>'
+          + (showDelta ? '<th style="width:80px">Δ S-1</th>' : '')
+          + '<th style="width:120px">Heures moy/poste</th></tr></thead><tbody>';
+    sallesList.forEach(function (s) {
+      var noData = (s.nodesWithData === 0);
+      var deltaCell = '';
+      if (showDelta) {
+        if (s.deltaPct == null) deltaCell = '<td class="muted">—</td>';
+        else {
+          var cls = (s.deltaPct > 0.1) ? 'delta-up' : (s.deltaPct < -0.1) ? 'delta-down' : 'delta-flat';
+          var arrow = (s.deltaPct > 0.1) ? '↑' : (s.deltaPct < -0.1) ? '↓' : '→';
+          deltaCell = '<td class="' + cls + '">' + arrow + ' ' + (s.deltaPct > 0 ? '+' : '') + s.deltaPct + ' pt</td>';
+        }
+      }
+      html += '<tr><td><b>' + escapeHtml(s.name) + '</b></td>'
+            + '<td>' + s.nodes + (s.nodesWithData < s.nodes ? ' <span class="muted">(' + s.nodesWithData + ')</span>' : '') + '</td>'
+            + '<td>' + (noData ? '<span class="muted">pas de données</span>' : barCell(s.avgOnPct)) + '</td>'
+            + '<td><b>' + (noData ? '—' : s.avgOnPct + ' %') + '</b></td>'
+            + deltaCell
+            + '<td>' + (noData ? '—' : formatHm(s.avgOnMinutes)) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+
+    // Page 2 : Heat-map
+    html += '<div class="page-break"></div>';
+    html += '<h2>Heat-map — fréquentation horaire</h2>';
+    html += '<div class="muted" style="margin-bottom:10px">Moyenne d\'occupation par créneau d\'une heure, sur les ' + heatmap.nodesCount + ' postes avec données.</div>';
+    html += '<table class="heat avoid-break"><thead><tr><th></th>';
+    for (var h = 8; h < 18; h++) html += '<th>' + h + 'h</th>';
+    html += '</tr></thead><tbody>';
+    var days = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'];
+    for (var d = 0; d < 5; d++) {
+      html += '<tr><th>' + days[d] + '</th>';
+      for (var hh = 0; hh < 10; hh++) {
+        var v = heatmap.grid[d * 10 + hh];
+        if (heatmap.nodesCount === 0) html += '<td><div class="c empty-c">—</div></td>';
+        else html += '<td><div class="c" style="background:' + heatColor(v) + '">' + v + '%</div></td>';
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div class="legend"><span>0 %</span><span class="grad"></span><span>100 %</span></div>';
+
+    // Page 3 : Top postes (deux colonnes)
+    html += '<div class="page-break"></div>';
+    html += '<h2>Top postes</h2>';
+    html += '<div class="two-cols">'
+          + '<div class="avoid-break"><h3>🔥 Les 10 plus utilisés</h3>' + topTable(top.top) + '</div>'
+          + '<div class="avoid-break"><h3>💤 Les 10 moins utilisés</h3>' + topTable(top.bottom) + '</div>'
+          + '</div>';
+
+    // Page 4 : Hors-heures top 25
+    var horsList = (hors.nodes || []).filter(function (n) { return n.offMinutes > 0; }).slice(0, 25);
+    if (horsList.length) {
+      html += '<div class="page-break"></div>';
+      html += '<h2>Hors heures — gaspillage énergétique</h2>';
+      html += '<div class="muted" style="margin-bottom:10px">Postes allumés en dehors de Lun-Ven 8h-18h (nuits, weekends). Top 25.</div>';
+      html += '<table><thead><tr><th>Poste</th><th>Salle</th><th style="width:120px">Temps hors heures</th><th style="width:60px">%</th><th style="width:100px">Durée</th></tr></thead><tbody>';
+      horsList.forEach(function (n) {
+        html += '<tr><td><b>' + escapeHtml(n.name) + '</b></td><td>' + escapeHtml(n.mesh) + '</td>'
+              + '<td>' + barCell(n.offPct) + '</td>'
+              + '<td><b>' + n.offPct + ' %</b></td>'
+              + '<td>' + formatHm(n.offMinutes) + '</td></tr>';
       });
-    } else if (currentTab === 'salles' && lastDetailResult && inDetail) {
-      rows.push(['Poste', 'OS', '%', 'Minutes', 'Hors heures (min)']);
-      (lastDetailResult.nodes || []).forEach(function (n) {
-        rows.push([n.name, n.os, n.onPct, n.onMinutes, n.offMinutes]);
-      });
-    } else { alert('Bascule d\'abord sur l\'onglet Salles.'); return; }
-    var csv = rows.map(function (r) {
-      return r.map(function (c) {
-        var s = (c == null) ? '' : String(c);
-        if (s.indexOf(';') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0) s = '"' + s.replace(/"/g, '""') + '"';
-        return s;
-      }).join(';');
-    }).join('\n');
-    var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'usagectl_' + (isWeekMode() ? $('weekSel').value : ('rolling_' + $('daysSel').value + 'j')) + '_' + currentTab + '.csv';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  };
+      html += '</tbody></table>';
+    }
+
+    html += '<div class="footer">usagectl — généré le ' + nowLabel + ' depuis MeshCentral · ' + escapeHtml(weekLabel) + '</div>';
+    html += '</body></html>';
+    return html;
+  }
+
+  function topTable(list) {
+    var h = '<table><thead><tr><th>Poste</th><th>Salle</th><th style="width:50px">%</th><th style="width:70px">Heures</th></tr></thead><tbody>';
+    (list || []).forEach(function (n) {
+      h += '<tr><td><b>' + escapeHtml(n.name) + '</b></td><td>' + escapeHtml(n.mesh) + '</td>'
+         + '<td><b>' + n.onPct + ' %</b></td><td>' + formatHm(n.onMinutes) + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    return h;
+  }
+
+  function reportHtmlRolling(salles) {
+    var totalDispo = formatHm(salles.totalMinutes || 0);
+    var sallesList = salles.salles || [];
+    var now = new Date();
+    var nowLabel = pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+    var periodLabel = salles.days === 1 ? '24 dernières heures' : (salles.days + ' derniers jours');
+    var html = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Rapport usagectl — ' + periodLabel + '</title><style>' + reportCss() + '</style></head><body>';
+    html += '<div class="cover"><h1>Taux d\'occupation des postes</h1>'
+          + '<div class="sub">Période glissante — ' + periodLabel + ' (' + totalDispo + ' disponibles)</div>'
+          + '<div class="meta">Rapport généré le ' + nowLabel + '</div></div>';
+    html += '<h2>Détail par salle</h2><table><thead><tr><th>Salle</th><th>Postes</th><th>Taux moyen</th><th>%</th><th>Heures moy/poste</th></tr></thead><tbody>';
+    sallesList.forEach(function (s) {
+      var noData = (s.nodesWithData === 0);
+      html += '<tr><td><b>' + escapeHtml(s.name) + '</b></td><td>' + s.nodes + '</td>'
+            + '<td>' + (noData ? '<span class="muted">—</span>' : barCell(s.avgOnPct)) + '</td>'
+            + '<td><b>' + (noData ? '—' : s.avgOnPct + ' %') + '</b></td>'
+            + '<td>' + (noData ? '—' : formatHm(s.avgOnMinutes)) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div class="footer">usagectl — ' + nowLabel + '</div></body></html>';
+    return html;
+  }
 </script>
 </body>
 </html>
