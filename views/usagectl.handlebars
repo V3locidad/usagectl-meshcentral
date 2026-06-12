@@ -132,6 +132,7 @@
 
   var currentTab = 'salles';
   var currentMesh = 'all'; // pour heatmap/horsHeures
+  var sallesSort = { key: 'name', dir: 1 }; // dir: 1 asc, -1 desc
   var lastSallesResult = null;
   var lastDetailResult = null;
   var inDetail = false;
@@ -237,21 +238,46 @@
       renderSalles();
     }).catch(function (e) { stopProgress(); $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>'; });
   }
+  function sortSalles(list) {
+    var k = sallesSort.key, d = sallesSort.dir;
+    var sorted = list.slice();
+    sorted.sort(function (a, b) {
+      var va, vb;
+      if (k === 'name') { va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase(); }
+      else if (k === 'nodes') { va = a.nodes || 0; vb = b.nodes || 0; }
+      else if (k === 'pct') { va = (a.nodesWithData === 0) ? -1 : (a.avgOnPct || 0); vb = (b.nodesWithData === 0) ? -1 : (b.avgOnPct || 0); }
+      else if (k === 'delta') {
+        va = (a.deltaFromZero) ? 1e9 : (a.deltaRel == null ? -1e9 : a.deltaRel);
+        vb = (b.deltaFromZero) ? 1e9 : (b.deltaRel == null ? -1e9 : b.deltaRel);
+      }
+      else if (k === 'hours') { va = (a.nodesWithData === 0) ? -1 : (a.avgOnMinutes || 0); vb = (b.nodesWithData === 0) ? -1 : (b.avgOnMinutes || 0); }
+      if (va < vb) return -1 * d;
+      if (va > vb) return 1 * d;
+      return 0;
+    });
+    return sorted;
+  }
+  function sortArrow(key) {
+    if (sallesSort.key !== key) return ' <span style="color:#ccc">⇅</span>';
+    return sallesSort.dir === 1 ? ' ▲' : ' ▼';
+  }
   function renderSalles() {
     var r = lastSallesResult; if (!r) return;
     var salles = applyFilter(r.salles || [], function (s) { return s.name; });
     if (!salles.length) { $('content').innerHTML = '<div class="empty">Aucune salle.</div>'; return; }
+    salles = sortSalles(salles);
     var periodLabel = periodLabelText(r), modeLabel = modeLabelText(r);
     var totalLabel = formatHm(r.totalMinutes || 0);
     var showDelta = r.prevWeekAvailable;
+    var thStyle = 'cursor:pointer;user-select:none';
     var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + periodLabel + modeLabel + ' = <span style="color:#0d6efd">' + totalLabel + '</span> dispo</h3></div>'
              + '<table><thead><tr>'
-             + '<th>Salle</th>'
-             + '<th style="width:80px">Postes</th>'
-             + '<th style="width:200px">Taux moyen</th>'
-             + '<th style="width:100px">%</th>'
-             + (showDelta ? '<th style="width:100px">Δ vs S-1</th>' : '')
-             + '<th style="width:220px">Heures moy./poste</th>'
+             + '<th style="' + thStyle + '" data-sort="name">Salle' + sortArrow('name') + '</th>'
+             + '<th style="width:80px;' + thStyle + '" data-sort="nodes">Postes' + sortArrow('nodes') + '</th>'
+             + '<th style="width:200px;' + thStyle + '" data-sort="pct">Taux moyen' + sortArrow('pct') + '</th>'
+             + '<th style="width:100px;' + thStyle + '" data-sort="pct">%' + sortArrow('pct') + '</th>'
+             + (showDelta ? '<th style="width:100px;' + thStyle + '" data-sort="delta">Δ vs S-1' + sortArrow('delta') + '</th>' : '')
+             + '<th style="width:220px;' + thStyle + '" data-sort="hours">Heures moy./poste' + sortArrow('hours') + '</th>'
              + '</tr></thead><tbody>';
     salles.forEach(function (s) {
       var noData = (s.nodesWithData === 0);
@@ -279,6 +305,14 @@
     $('content').innerHTML = html;
     Array.prototype.forEach.call($('content').querySelectorAll('tr.clickable'), function (tr) {
       tr.onclick = function () { loadSalleDetail(tr.getAttribute('data-meshid')); };
+    });
+    Array.prototype.forEach.call($('content').querySelectorAll('th[data-sort]'), function (th) {
+      th.onclick = function () {
+        var k = th.getAttribute('data-sort');
+        if (sallesSort.key === k) sallesSort.dir = -sallesSort.dir;
+        else { sallesSort.key = k; sallesSort.dir = (k === 'name') ? 1 : -1; }
+        renderSalles();
+      };
     });
   }
   function loadSalleDetail(meshid) {
