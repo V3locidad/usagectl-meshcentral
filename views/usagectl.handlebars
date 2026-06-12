@@ -580,8 +580,11 @@
 
   function barCell(pct) {
     var p = Math.max(0, Math.min(100, pct || 0));
-    var lvl = (p < 10) ? 0 : (p < 30) ? 1 : (p < 60) ? 2 : 3;
-    return '<span class="bar lvl' + lvl + '"><span style="width:' + p.toFixed(1) + '%"></span></span>';
+    var color = (p < 10) ? '#d9534f' : (p < 30) ? '#f39c12' : '#2ecc40';
+    var w = Math.max(1, Math.round(p));
+    return '<span style="display:inline-block;width:100px;height:10px;background:#e5e7eb;border-radius:2px;vertical-align:middle;overflow:hidden;line-height:0;">'
+         + '<span style="display:inline-block;width:' + w + 'px;height:10px;background:' + color + ';border-radius:2px;"></span>'
+         + '</span>';
   }
 
   function reportInnerWeek(salles, heatmap, hors, top) {
