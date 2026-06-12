@@ -474,7 +474,7 @@
     if (html2pdfPromise) return html2pdfPromise;
     html2pdfPromise = new Promise(function (resolve, reject) {
       var s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js';
+      s.src = '/pluginadmin.ashx?pin=usagectl&action=lib&name=html2pdf';
       s.onload = function () { resolve(window.html2pdf); };
       s.onerror = function () { reject(new Error('Chargement html2pdf.js impossible (réseau ?)')); };
       document.head.appendChild(s);

@@ -564,6 +564,23 @@ module.exports.usagectl = function (parent) {
         if (!action) return res.render(path.join(__dirname, 'views/usagectl'), { user });
         if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl' });
 
+        if (action === 'lib') {
+            const name = String((req.query && req.query.name) || '');
+            const allowed = { 'html2pdf': 'html2pdf.bundle.min.js' };
+            const file = allowed[name];
+            if (!file) { res.status(404).end('unknown lib'); return; }
+            const p = path.join(__dirname, 'lib', file);
+            try {
+                const buf = fs.readFileSync(p);
+                res.set('Content-Type', 'application/javascript; charset=utf-8');
+                res.set('Cache-Control', 'public, max-age=86400');
+                return res.end(buf);
+            } catch (e) {
+                res.status(500).end('lib read err: ' + e.message);
+                return;
+            }
+        }
+
         if (action === 'progress') return sendJson(res, 200, currentJob || { idle: true });
 
         if (action === 'invalidate') {
