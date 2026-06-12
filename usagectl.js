@@ -21,12 +21,20 @@
 const fs = require('fs');
 const path = require('path');
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const CACHE_FILE = path.join(__dirname, 'usagectl-cache.json');
 const CACHE_TTL_LIVE_MS = 5 * 60 * 1000;
 const CACHE_MAX_WEEKS = 20;
 const CONCURRENCY = 6;
 const NODE_TIMEOUT_MS = 8000;
+
+// Salles à exclure des stats (mesh fourre-tout où arrivent les postes neufs).
+const EXCLUDED_MESH_NAMES = ['PC-PEDAGO'];
+function isExcludedMesh(name) {
+    if (!name) return false;
+    const u = String(name).toUpperCase();
+    return EXCLUDED_MESH_NAMES.some(n => u === n.toUpperCase());
+}
 
 function sendJson(res, code, body) {
     try { res.status(code).set('Content-Type', 'application/json').end(JSON.stringify(body)); } catch (_) {}
@@ -281,10 +289,16 @@ module.exports.usagectl = function (parent) {
         db.GetAllType('mesh', function (e1, meshDocs) {
             if (e1) { currentJob = null; return cb(e1, null); }
             const meshNames = {};
-            (meshDocs || []).forEach(m => { if (m && m._id) meshNames[m._id] = m.name || m._id; });
+            const excludedIds = new Set();
+            (meshDocs || []).forEach(m => {
+                if (m && m._id) {
+                    meshNames[m._id] = m.name || m._id;
+                    if (isExcludedMesh(m.name)) excludedIds.add(m._id);
+                }
+            });
             db.GetAllType('node', function (e2, nodes) {
                 if (e2) { currentJob = null; return cb(e2, null); }
-                const allNodes = (nodes || []).filter(n => n && n._id && n.meshid);
+                const allNodes = (nodes || []).filter(n => n && n._id && n.meshid && !excludedIds.has(n.meshid));
                 currentJob = { kind: 'week', weekKey, processed: 0, total: allNodes.length, startedAt: Date.now() };
                 const nodesByMesh = {};
                 runPool(allNodes, CONCURRENCY, function (n, _i, doneOne) {
@@ -491,10 +505,16 @@ module.exports.usagectl = function (parent) {
             db.GetAllType('mesh', function (e1, meshDocs) {
                 if (e1) return sendJson(res, 500, { error: e1.message });
                 const meshNames = {};
-                (meshDocs || []).forEach(m => { if (m && m._id) meshNames[m._id] = m.name || m._id; });
+                const excludedIds = new Set();
+                (meshDocs || []).forEach(m => {
+                    if (m && m._id) {
+                        meshNames[m._id] = m.name || m._id;
+                        if (isExcludedMesh(m.name)) excludedIds.add(m._id);
+                    }
+                });
                 db.GetAllType('node', function (e2, nodes) {
                     if (e2) return sendJson(res, 500, { error: e2.message });
-                    const allNodes = (nodes || []).filter(n => n && n._id && n.meshid);
+                    const allNodes = (nodes || []).filter(n => n && n._id && n.meshid && !excludedIds.has(n.meshid));
                     currentJob = { kind: 'rolling', processed: 0, total: allNodes.length, startedAt: Date.now() };
                     const agg = {};
                     runPool(allNodes, CONCURRENCY, function (n, _i, doneOne) {
