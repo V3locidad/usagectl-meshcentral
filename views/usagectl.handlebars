@@ -467,38 +467,74 @@
     else if (currentTab === 'horsHeures') loadHorsHeures();
   };
 
-  // ====== Export PDF (rapport complet) ======
-  $('pdfBtn').onclick = function () { buildAndOpenReport(); };
+  // ====== Export PDF (téléchargement direct via html2pdf.js) ======
+  var html2pdfPromise = null;
+  function loadHtml2Pdf() {
+    if (window.html2pdf) return Promise.resolve(window.html2pdf);
+    if (html2pdfPromise) return html2pdfPromise;
+    html2pdfPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js';
+      s.onload = function () { resolve(window.html2pdf); };
+      s.onerror = function () { reject(new Error('Chargement html2pdf.js impossible (réseau ?)')); };
+      document.head.appendChild(s);
+    });
+    return html2pdfPromise;
+  }
 
-  function buildAndOpenReport() {
-    if (!isWeekMode()) {
-      if (!lastSallesResult) { alert('Charge d\'abord la vue Salles.'); return; }
-      var html = reportHtmlRolling(lastSallesResult);
-      openPrintWindow(html);
-      return;
-    }
+  $('pdfBtn').onclick = function () { buildAndDownloadPdf(); };
+
+  function buildAndDownloadPdf() {
     var btn = $('pdfBtn'); btn.disabled = true; btn.textContent = '⏳ Préparation…';
-    var q = getQuery();
-    Promise.all([
-      api('salles', q),
-      api('heatmap', Object.assign({ meshid: 'all' }, q)),
-      api('horsHeures', Object.assign({ meshid: 'all' }, q)),
-      api('topPostes', q),
-    ]).then(function (results) {
-      var html = reportHtmlWeek(results[0], results[1], results[2], results[3]);
-      openPrintWindow(html);
+    loadHtml2Pdf().then(function () {
+      if (!isWeekMode()) {
+        if (!lastSallesResult) throw new Error('Charge d\'abord la vue Salles.');
+        var html = reportInnerRolling(lastSallesResult);
+        return renderPdf(html, 'usagectl_rolling_' + $('daysSel').value + 'j.pdf');
+      }
+      var q = getQuery();
+      btn.textContent = '⏳ Calcul…';
+      return Promise.all([
+        api('salles', q),
+        api('heatmap', Object.assign({ meshid: 'all' }, q)),
+        api('horsHeures', Object.assign({ meshid: 'all' }, q)),
+        api('topPostes', q),
+      ]).then(function (r) {
+        btn.textContent = '⏳ Rendu PDF…';
+        var html = reportInnerWeek(r[0], r[1], r[2], r[3]);
+        return renderPdf(html, 'usagectl_' + q.weekStart + '.pdf');
+      });
     }).catch(function (e) {
-      alert('Erreur génération rapport: ' + e.message);
+      alert('Erreur génération PDF: ' + e.message);
     }).then(function () {
       btn.disabled = false; btn.textContent = '📄 Rapport PDF';
     });
   }
 
-  function openPrintWindow(html) {
-    var w = window.open('', '_blank');
-    if (!w) { alert('Le navigateur a bloqué la fenêtre. Autorise les popups pour ce site.'); return; }
-    w.document.open(); w.document.write(html); w.document.close();
-    w.onload = function () { setTimeout(function () { w.focus(); w.print(); }, 300); };
+  function renderPdf(innerHtml, filename) {
+    var holder = document.createElement('div');
+    holder.style.cssText = 'position:fixed;left:-99999px;top:0;width:190mm;background:#fff;';
+    var styleTag = document.createElement('style');
+    styleTag.textContent = reportCss();
+    holder.appendChild(styleTag);
+    var content = document.createElement('div');
+    content.innerHTML = innerHtml;
+    holder.appendChild(content);
+    document.body.appendChild(holder);
+    var opt = {
+      margin: [12, 10, 12, 10],
+      filename: filename,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], before: '.page-break', avoid: '.avoid-break' },
+    };
+    return window.html2pdf().set(opt).from(content).save().then(function () {
+      document.body.removeChild(holder);
+    }, function (e) {
+      document.body.removeChild(holder);
+      throw e;
+    });
   }
 
   function reportCss() {
@@ -548,7 +584,7 @@
     return '<span class="bar lvl' + lvl + '"><span style="width:' + p.toFixed(1) + '%"></span></span>';
   }
 
-  function reportHtmlWeek(salles, heatmap, hors, top) {
+  function reportInnerWeek(salles, heatmap, hors, top) {
     var weekLabel = salles.weekLabel || '';
     var totalDispo = formatHm(salles.totalMinutes || 0);
     var sallesList = salles.salles || [];
@@ -566,7 +602,7 @@
     var now = new Date();
     var nowLabel = pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
 
-    var html = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Rapport usagectl — ' + escapeHtml(weekLabel) + '</title><style>' + reportCss() + '</style></head><body>';
+    var html = '';
 
     // Cover
     html += '<div class="cover">'
@@ -653,8 +689,7 @@
       html += '</tbody></table>';
     }
 
-    html += '<div class="footer">usagectl — généré le ' + nowLabel + ' depuis MeshCentral · ' + escapeHtml(weekLabel) + '</div>';
-    html += '</body></html>';
+    html += '<div class="footer-note muted" style="margin-top:18px;text-align:center;font-size:9px">usagectl · ' + escapeHtml(weekLabel) + ' · généré le ' + nowLabel + '</div>';
     return html;
   }
 
@@ -668,13 +703,13 @@
     return h;
   }
 
-  function reportHtmlRolling(salles) {
+  function reportInnerRolling(salles) {
     var totalDispo = formatHm(salles.totalMinutes || 0);
     var sallesList = salles.salles || [];
     var now = new Date();
     var nowLabel = pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
     var periodLabel = salles.days === 1 ? '24 dernières heures' : (salles.days + ' derniers jours');
-    var html = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Rapport usagectl — ' + periodLabel + '</title><style>' + reportCss() + '</style></head><body>';
+    var html = '';
     html += '<div class="cover"><h1>Taux d\'occupation des postes</h1>'
           + '<div class="sub">Période glissante — ' + periodLabel + ' (' + totalDispo + ' disponibles)</div>'
           + '<div class="meta">Rapport généré le ' + nowLabel + '</div></div>';
@@ -687,7 +722,7 @@
             + '<td>' + (noData ? '—' : formatHm(s.avgOnMinutes)) + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="footer">usagectl — ' + nowLabel + '</div></body></html>';
+    html += '<div class="muted" style="margin-top:18px;text-align:center;font-size:9px">usagectl · ' + nowLabel + '</div>';
     return html;
   }
 </script>
