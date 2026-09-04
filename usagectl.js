@@ -1,19 +1,14 @@
 /*
- * usagectl — Taux d'occupation des postes par salle.
+ * usagectl — Taux d'occupation réelle des postes par salle.
  *
- * Lit la power timeline MeshCentral (collection powerfile) pour calculer
- * la durée pendant laquelle chaque poste a été allumé. Agrégation par salle.
+ * Enregistre les changements de sessions OS remontés par MeshAgent (`coreinfo.users`)
+ * et les agrège par poste et par salle. La power timeline reste utilisée pour
+ * afficher séparément le taux d'allumage et le gaspillage hors heures.
  *
- * v0.0.26 :
- *   - Cache disque (usagectl-cache.json) : semaines passées calculées une
- *     seule fois, semaine en cours TTL 5 min.
- *   - Parallélisation des lectures power (concurrence 6).
- *   - Heat-map Lun-Ven × 8h-18h (grille 5×10).
- *   - Vue hors-heures (gaspillage énergétique).
- *   - Top / bottom postes.
- *   - Delta vs semaine précédente (si déjà en cache).
- *   - Endpoint `progress` (barre de progression UI).
- *   - Code de debug supprimé.
+ * v0.0.35 :
+ *   - Occupation basée sur les sessions OS ouvertes, avec historique local.
+ *   - Retour à l'état libre à la déconnexion utilisateur ou agent.
+ *   - Taux d'allumage conservé comme métrique distincte.
  */
 
 'use strict';
@@ -21,8 +16,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const CACHE_FILE = path.join(__dirname, 'usagectl-cache.json');
+const PRESENCE_VERSION = 1;
+const PRESENCE_FILE = path.join(__dirname, 'usagectl-presence.json');
+const PRESENCE_RETENTION_DAYS = 400;
+const PRESENCE_SAVE_DELAY_MS = 1000;
 const CACHE_TTL_LIVE_MS = 5 * 60 * 1000;
 const CACHE_MAX_WEEKS = 20;
 const CONCURRENCY = 6;
@@ -84,6 +83,175 @@ module.exports.usagectl = function (parent) {
         } catch (_) {}
     }
     function invalidateWeek(key) { delete cache.weeks[key]; saveCache(); }
+
+    // ============ Historique des sessions OS ==========
+    // MeshCentral expose la liste courante dans coreinfo.users, mais ne conserve
+    // pas un historique utilisable. On stocke uniquement le nombre de sessions
+    // (jamais les identifiants utilisateurs) et seulement lors d'un changement.
+    let presence = { version: PRESENCE_VERSION, createdAt: Date.now(), nodes: {} };
+    let presenceSaveTimer = null;
+    try {
+        if (fs.existsSync(PRESENCE_FILE)) {
+            const j = JSON.parse(fs.readFileSync(PRESENCE_FILE, 'utf8'));
+            if (j && j.version === PRESENCE_VERSION && j.nodes && typeof j.nodes === 'object') presence = j;
+        }
+    } catch (_) {}
+
+    function savePresenceNow() {
+        if (presenceSaveTimer) { clearTimeout(presenceSaveTimer); presenceSaveTimer = null; }
+        const tmp = PRESENCE_FILE + '.tmp';
+        try {
+            fs.writeFileSync(tmp, JSON.stringify(presence));
+            fs.renameSync(tmp, PRESENCE_FILE);
+        } catch (_) {
+            try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+        }
+    }
+    function savePresenceSoon() {
+        if (presenceSaveTimer) return;
+        presenceSaveTimer = setTimeout(savePresenceNow, PRESENCE_SAVE_DELAY_MS);
+        if (presenceSaveTimer && typeof presenceSaveTimer.unref === 'function') presenceSaveTimer.unref();
+    }
+    function uniqueUserCount(users) {
+        if (!Array.isArray(users)) return null;
+        const seen = new Set();
+        users.forEach(u => { if (typeof u === 'string' && u.trim()) seen.add(u.trim().toLowerCase()); });
+        return seen.size;
+    }
+    function prunePresenceRecord(rec, now) {
+        if (!rec || !Array.isArray(rec.events) || rec.events.length < 2) return;
+        const cutoff = now - PRESENCE_RETENTION_DAYS * 86400000;
+        // Conserver le dernier état antérieur à la rétention pour connaître
+        // l'état initial au début de la fenêtre conservée.
+        let keep = 0;
+        while (keep + 1 < rec.events.length && Number(rec.events[keep + 1][0]) < cutoff) keep++;
+        if (keep > 0) rec.events.splice(0, keep);
+    }
+    function recordPresence(nodeId, meshId, userCount, atMs) {
+        if (!nodeId || !Number.isFinite(userCount)) return;
+        const now = Number.isFinite(atMs) ? atMs : Date.now();
+        let rec = presence.nodes[nodeId];
+        let changed = false;
+        if (!rec) {
+            rec = presence.nodes[nodeId] = { meshid: meshId || '', firstSeenAt: now, events: [] };
+            changed = true;
+        }
+        if (meshId && rec.meshid !== meshId) { rec.meshid = meshId; changed = true; }
+        if (!Number.isFinite(rec.firstSeenAt)) rec.firstSeenAt = now;
+        if (!Array.isArray(rec.events)) rec.events = [];
+        const last = rec.events.length ? rec.events[rec.events.length - 1] : null;
+        if (!last || Number(last[1]) !== userCount) { rec.events.push([now, userCount]); changed = true; }
+        rec.lastSeenAt = now;
+        if (!changed) return;
+        prunePresenceRecord(rec, now);
+        // Toute transition de la semaine courante rend son agrégat obsolète.
+        delete cache.weeks[fmtIso(mondayOf(new Date(now)))];
+        savePresenceSoon();
+    }
+    function presenceRecord(nodeId) {
+        const rec = presence.nodes[nodeId];
+        return (rec && Array.isArray(rec.events) && rec.events.length) ? rec : null;
+    }
+    function presenceEvents(nodeId) {
+        const rec = presenceRecord(nodeId);
+        if (!rec) return [];
+        return rec.events.map(e => ({ time: Number(e[0]), power: Number(e[1]) > 0 ? 1 : 0 }));
+    }
+    function presenceSinceMs() {
+        let min = null;
+        Object.keys(presence.nodes).forEach(id => {
+            const rec = presenceRecord(id);
+            if (!rec) return;
+            const t = Number.isFinite(rec.firstSeenAt) ? rec.firstSeenAt : Number(rec.events[0][0]);
+            if (Number.isFinite(t) && (min == null || t < min)) min = t;
+        });
+        return min;
+    }
+    function coverageBuckets(nodeId, buckets, effectiveEnd) {
+        const rec = presenceRecord(nodeId);
+        const out = new Array(buckets.length).fill(0);
+        if (!rec) return out;
+        const first = Number.isFinite(rec.firstSeenAt) ? rec.firstSeenAt : Number(rec.events[0][0]);
+        for (let i = 0; i < buckets.length; i++) {
+            const a = Math.max(buckets[i][0], first);
+            const b = Math.min(buckets[i][1], effectiveEnd);
+            if (b > a) out[i] = b - a;
+        }
+        return out;
+    }
+    function presenceInWindows(nodeId, start, end, windows) {
+        const rec = presenceRecord(nodeId);
+        if (!rec) return { occupiedMs: 0, coverageMs: 0, hasData: false };
+        const first = Number.isFinite(rec.firstSeenAt) ? rec.firstSeenAt : Number(rec.events[0][0]);
+        const coverageStart = Math.max(start, first);
+        if (coverageStart >= end) return { occupiedMs: 0, coverageMs: 0, hasData: false };
+        const coverageMs = windows ? intersectSum(coverageStart, end, windows) : (end - coverageStart);
+        const occupiedMs = computeOnInWindows(presenceEvents(nodeId), coverageStart, end, windows);
+        return { occupiedMs, coverageMs, hasData: coverageMs > 0 };
+    }
+
+    // Reçoit les changements de session immédiatement depuis MeshAgent.
+    obj.hook_processAgentData = function (command, agent) {
+        try {
+            if (!command || command.action !== 'coreinfo' || !Array.isArray(command.users)) return;
+            const count = uniqueUserCount(command.users);
+            if (count == null) return;
+            recordPresence(agent && agent.dbNodeKey, agent && agent.dbMeshKey, count, Date.now());
+        } catch (_) {}
+    };
+
+    // Ferme la présence lors d'une déconnexion agent. Cela évite qu'une session
+    // restée ouverte au moment d'un arrêt soit comptée après l'extinction du PC.
+    obj.HandleEvent = function (_source, event) {
+        try {
+            if (!event) return;
+            if (event.action === 'nodeconnect' && event.nodeid &&
+                (((event.conn != null) && ((Number(event.conn) & 1) === 0)) ||
+                 ((event.pwr != null) && Number(event.pwr) === 0))) {
+                recordPresence(event.nodeid, event.meshid, 0, Date.now());
+            } else if (event.action === 'stopped') {
+                const now = Date.now();
+                Object.keys(presence.nodes).forEach(id => {
+                    const rec = presenceRecord(id);
+                    if (rec && Number(rec.events[rec.events.length - 1][1]) > 0) recordPresence(id, rec.meshid, 0, now);
+                });
+                savePresenceNow();
+            }
+        } catch (_) {}
+    };
+
+    obj.server_startup = function () {
+        try {
+            // Un rechargement à chaud du plugin ne doit pas laisser l'ancienne
+            // instance abonnée aux événements.
+            const old = obj.meshServer.__usagectlPresenceListener;
+            if (old && old !== obj && typeof obj.meshServer.RemoveAllEventDispatch === 'function') {
+                obj.meshServer.RemoveAllEventDispatch(old);
+            }
+            if (typeof obj.meshServer.AddEventDispatch === 'function') obj.meshServer.AddEventDispatch(['*'], obj);
+            obj.meshServer.__usagectlPresenceListener = obj;
+
+            // Fermer d'abord les états éventuellement restés ouverts après un
+            // arrêt brutal, puis réamorcer les agents en ligne depuis le nœud DB.
+            const now = Date.now();
+            Object.keys(presence.nodes).forEach(id => {
+                const rec = presenceRecord(id);
+                if (rec && Number(rec.events[rec.events.length - 1][1]) > 0) recordPresence(id, rec.meshid, 0, now);
+            });
+            const db = obj.meshServer.db;
+            const online = obj.meshServer.webserver && obj.meshServer.webserver.wsagents;
+            if (db && typeof db.GetAllType === 'function') {
+                db.GetAllType('node', function (_err, nodes) {
+                    (nodes || []).forEach(n => {
+                        if (n && n._id && online && online[n._id] && Array.isArray(n.users)) {
+                            const count = uniqueUserCount(n.users);
+                            if (count != null) recordPresence(n._id, n.meshid, count, Date.now());
+                        }
+                    });
+                });
+            }
+        } catch (_) {}
+    };
 
     // ============ Job en cours (pour barre de progression UI) ============
     let currentJob = null; // { kind, weekKey, processed, total, startedAt }
@@ -194,11 +362,13 @@ module.exports.usagectl = function (parent) {
         return on;
     }
     // Per-bucket on time (1 pass per bucket — buckets sont disjoints donc l'état initial se recalcule).
-    function computeBuckets(events, buckets) {
+    function computeBuckets(events, buckets, limitEnd) {
         sortEvents(events);
         const out = new Array(buckets.length).fill(0);
         for (let i = 0; i < buckets.length; i++) {
-            const start = buckets[i][0], end = buckets[i][1];
+            const start = buckets[i][0];
+            const end = Math.min(buckets[i][1], Number.isFinite(limitEnd) ? limitEnd : buckets[i][1]);
+            if (end <= start) continue;
             let on = 0, curState = null, curStart = start;
             for (let j = 0; j < events.length; j++) {
                 const e = events[j];
@@ -306,13 +476,24 @@ module.exports.usagectl = function (parent) {
                         try {
                             const events = ev || [];
                             const hasData = events.length > 0;
-                            const bucketsOn = hasData ? computeBuckets(events, buckets) : new Array(50).fill(0);
+                            const powerBuckets = hasData ? computeBuckets(events, buckets, effectiveEnd) : new Array(50).fill(0);
                             const offOn = hasData ? computeOnInWindows(events, monMs, effectiveEnd, offWindows) : 0;
+                            const occupiedBuckets = computeBuckets(presenceEvents(n._id), buckets, effectiveEnd);
+                            const observedBuckets = coverageBuckets(n._id, buckets, effectiveEnd);
+                            const hasPresenceData = sumArr(observedBuckets) > 0;
                             if (!nodesByMesh[n.meshid]) nodesByMesh[n.meshid] = [];
                             nodesByMesh[n.meshid].push({
                                 id: n._id, name: n.name || n._id, os: n.osdesc || '',
                                 meshid: n.meshid,
-                                buckets: bucketsOn, offMs: offOn, hasData,
+                                // `buckets` reste l'occupation principale pour
+                                // compatibilité avec les réponses historiques.
+                                buckets: occupiedBuckets,
+                                observedBuckets,
+                                powerBuckets,
+                                offMs: offOn,
+                                hasData: hasPresenceData,
+                                hasPresenceData,
+                                hasPowerData: hasData,
                             });
                         } catch (_) {}
                         if (currentJob) currentJob.processed++;
@@ -352,16 +533,24 @@ module.exports.usagectl = function (parent) {
         const meshIds = Object.keys(data.nodesByMesh);
         return meshIds.map(mid => {
             const nodes = data.nodesByMesh[mid];
-            const withData = nodes.filter(n => n.hasData);
-            const sumOn = withData.reduce((s, n) => s + sumArr(n.buckets), 0);
-            const avgOn = withData.length ? sumOn / withData.length : 0;
+            const withData = nodes.filter(n => n.hasPresenceData || n.hasData);
+            const withPower = nodes.filter(n => n.hasPowerData || (!n.hasPresenceData && n.hasData));
+            const sumOccupied = withData.reduce((s, n) => s + sumArr(n.buckets || []), 0);
+            const sumObserved = withData.reduce((s, n) => s + sumArr(n.observedBuckets || []), 0);
+            const avgOccupied = withData.length ? sumOccupied / withData.length : 0;
+            const sumPower = withPower.reduce((s, n) => s + sumArr(n.powerBuckets || []), 0);
+            const avgPower = withPower.length ? sumPower / withPower.length : 0;
             return {
                 meshid: mid,
                 name: data.meshNames[mid] || mid,
                 nodes: nodes.length,
                 nodesWithData: withData.length,
-                avgOnPct: withData.length ? Math.round((avgOn / tSchool * 100) * 10) / 10 : 0,
-                avgOnMinutes: Math.round(avgOn / 60000),
+                nodesWithPowerData: withPower.length,
+                avgOnPct: sumObserved ? Math.round((sumOccupied / sumObserved * 100) * 10) / 10 : 0,
+                avgOnMinutes: Math.round(avgOccupied / 60000),
+                avgObservedMinutes: withData.length ? Math.round((sumObserved / withData.length) / 60000) : null,
+                avgPowerPct: withPower.length ? Math.round((avgPower / tSchool * 100) * 10) / 10 : null,
+                avgPowerMinutes: withPower.length ? Math.round(avgPower / 60000) : null,
             };
         }).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
     }
@@ -399,21 +588,33 @@ module.exports.usagectl = function (parent) {
                 totalMinutes: Math.round(tSchool / 60000), days: 7,
                 cachedAt: data.computedAt, permanent: data.permanent,
                 prevWeekAvailable: !!prev,
+                presenceSince: presenceSinceMs(), metric: 'loggedInSessions',
             });
         }
 
         if (action === 'salleDetail') {
             const mid = String(req.query.meshid || '');
-            const nodes = (data.nodesByMesh[mid] || []).map(n => ({
-                id: n.id, name: n.name, os: n.os,
-                hasData: n.hasData,
-                onPct: n.hasData ? Math.round((sumArr(n.buckets) / tSchool * 100) * 10) / 10 : null,
-                onMinutes: n.hasData ? Math.round(sumArr(n.buckets) / 60000) : null,
-                offMinutes: n.hasData ? Math.round(n.offMs / 60000) : null,
-            })).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
+            const nodes = (data.nodesByMesh[mid] || []).map(n => {
+                const occupied = sumArr(n.buckets || []);
+                const observed = sumArr(n.observedBuckets || []);
+                const power = sumArr(n.powerBuckets || []);
+                const hasPresence = observed > 0;
+                const hasPower = n.hasPowerData || (!n.hasPresenceData && n.hasData);
+                return {
+                    id: n.id, name: n.name, os: n.os,
+                    hasData: hasPresence,
+                    onPct: hasPresence ? Math.round((occupied / observed * 100) * 10) / 10 : null,
+                    onMinutes: hasPresence ? Math.round(occupied / 60000) : null,
+                    observedMinutes: hasPresence ? Math.round(observed / 60000) : null,
+                    powerPct: hasPower ? Math.round((power / tSchool * 100) * 10) / 10 : null,
+                    powerMinutes: hasPower ? Math.round(power / 60000) : null,
+                    offMinutes: hasPower ? Math.round(n.offMs / 60000) : null,
+                };
+            }).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
             return sendJson(res, 200, {
                 meshid: mid, nodes, weekMode: true, weekLabel: lbl,
                 totalMinutes: Math.round(tSchool / 60000), days: 7,
+                presenceSince: presenceSinceMs(), metric: 'loggedInSessions',
             });
         }
 
@@ -425,13 +626,18 @@ module.exports.usagectl = function (parent) {
             } else {
                 nodes = data.nodesByMesh[mid] || [];
             }
-            const withData = nodes.filter(n => n.hasData);
-            const grid = new Array(50).fill(0);
+            const withData = nodes.filter(n => n.hasPresenceData || n.hasData);
+            const grid = new Array(50).fill(null);
+            const observedGrid = new Array(50).fill(0);
             if (withData.length) {
                 for (let b = 0; b < 50; b++) {
-                    let s = 0;
-                    for (let i = 0; i < withData.length; i++) s += withData[i].buckets[b];
-                    grid[b] = Math.round((s / withData.length / 3600000 * 100) * 10) / 10;
+                    let occupied = 0, observed = 0;
+                    for (let i = 0; i < withData.length; i++) {
+                        occupied += (withData[i].buckets || [])[b] || 0;
+                        observed += (withData[i].observedBuckets || [])[b] || 0;
+                    }
+                    observedGrid[b] = observed;
+                    grid[b] = observed ? Math.round((occupied / observed * 100) * 10) / 10 : null;
                 }
             }
             const sallesList = Object.keys(data.nodesByMesh).map(k => ({ meshid: k, name: data.meshNames[k] || k }))
@@ -439,7 +645,8 @@ module.exports.usagectl = function (parent) {
             return sendJson(res, 200, {
                 grid, weekLabel: lbl, meshid: mid,
                 meshName: (mid === 'all') ? 'Tous les postes' : (data.meshNames[mid] || mid),
-                nodesCount: withData.length, salles: sallesList,
+                nodesCount: withData.length, observedGrid, salles: sallesList,
+                presenceSince: presenceSinceMs(), metric: 'loggedInSessions',
             });
         }
 
@@ -453,7 +660,7 @@ module.exports.usagectl = function (parent) {
             } else {
                 (data.nodesByMesh[mid] || []).forEach(n => nodes.push(Object.assign({}, n, { meshName: data.meshNames[mid] || mid })));
             }
-            const list = nodes.filter(n => n.hasData).map(n => ({
+            const list = nodes.filter(n => n.hasPowerData || (!n.hasPresenceData && n.hasData)).map(n => ({
                 id: n.id, name: n.name, mesh: n.meshName,
                 offMinutes: Math.round(n.offMs / 60000),
                 offPct: Math.round((n.offMs / tOff * 100) * 10) / 10,
@@ -470,12 +677,14 @@ module.exports.usagectl = function (parent) {
             const all = [];
             Object.keys(data.nodesByMesh).forEach(k => {
                 data.nodesByMesh[k].forEach(n => {
-                    if (!n.hasData) return;
-                    const on = sumArr(n.buckets);
+                    const observed = sumArr(n.observedBuckets || []);
+                    if (!observed) return;
+                    const on = sumArr(n.buckets || []);
                     all.push({
                         id: n.id, name: n.name, mesh: data.meshNames[k] || k,
                         onMinutes: Math.round(on / 60000),
-                        onPct: Math.round((on / tSchool * 100) * 10) / 10,
+                        observedMinutes: Math.round(observed / 60000),
+                        onPct: Math.round((on / observed * 100) * 10) / 10,
                     });
                 });
             });
@@ -519,12 +728,21 @@ module.exports.usagectl = function (parent) {
                     const agg = {};
                     runPool(allNodes, CONCURRENCY, function (n, _i, doneOne) {
                         getPowerTimeline(n._id, start, function (_err, ev) {
-                            if (!agg[n.meshid]) agg[n.meshid] = { totalOn: 0, nodes: 0, withData: 0 };
+                            if (!agg[n.meshid]) agg[n.meshid] = {
+                                totalOccupied: 0, totalObserved: 0,
+                                totalPowerOn: 0, nodes: 0, withData: 0, withPowerData: 0,
+                            };
                             agg[n.meshid].nodes++;
                             const events = ev || [];
                             if (events.length) {
+                                agg[n.meshid].withPowerData++;
+                                try { agg[n.meshid].totalPowerOn += computeOnInWindows(events, start, now, windows); } catch (_) {}
+                            }
+                            const p = presenceInWindows(n._id, start, now, windows);
+                            if (p.hasData) {
                                 agg[n.meshid].withData++;
-                                try { agg[n.meshid].totalOn += computeOnInWindows(events, start, now, windows); } catch (_) {}
+                                agg[n.meshid].totalOccupied += p.occupiedMs;
+                                agg[n.meshid].totalObserved += p.coverageMs;
                             }
                             if (currentJob) currentJob.processed++;
                             doneOne();
@@ -533,15 +751,23 @@ module.exports.usagectl = function (parent) {
                         currentJob = null;
                         const salles = Object.keys(agg).map(mid => {
                             const a = agg[mid];
-                            const avgOn = a.withData ? a.totalOn / a.withData : 0;
+                            const avgOccupied = a.withData ? a.totalOccupied / a.withData : 0;
+                            const avgPower = a.withPowerData ? a.totalPowerOn / a.withPowerData : 0;
                             return {
                                 meshid: mid, name: meshNames[mid] || mid,
                                 nodes: a.nodes, nodesWithData: a.withData,
-                                avgOnPct: a.withData ? Math.round((avgOn / totalMs * 100) * 10) / 10 : 0,
-                                avgOnMinutes: Math.round(avgOn / 60000),
+                                nodesWithPowerData: a.withPowerData,
+                                avgOnPct: a.totalObserved ? Math.round((a.totalOccupied / a.totalObserved * 100) * 10) / 10 : 0,
+                                avgOnMinutes: Math.round(avgOccupied / 60000),
+                                avgObservedMinutes: a.withData ? Math.round((a.totalObserved / a.withData) / 60000) : null,
+                                avgPowerPct: a.withPowerData ? Math.round((avgPower / totalMs * 100) * 10) / 10 : null,
+                                avgPowerMinutes: a.withPowerData ? Math.round(avgPower / 60000) : null,
                             };
                         }).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
-                        sendJson(res, 200, { salles, days, totalMinutes: Math.round(totalMs / 60000), weekMode: false });
+                        sendJson(res, 200, {
+                            salles, days, totalMinutes: Math.round(totalMs / 60000), weekMode: false,
+                            presenceSince: presenceSinceMs(), metric: 'loggedInSessions',
+                        });
                     });
                 });
             });
@@ -557,16 +783,17 @@ module.exports.usagectl = function (parent) {
                 runPool(list, CONCURRENCY, function (n, _i, doneOne) {
                     getPowerTimeline(n._id, start, function (_e, ev) {
                         const events = ev || [];
-                        const hasData = events.length > 0;
-                        let onMin = 0, onPct = null;
-                        if (hasData) {
-                            const on = computeOnInWindows(events, start, now, windows);
-                            onMin = Math.round(on / 60000);
-                            onPct = Math.round((on / totalMs * 100) * 10) / 10;
-                        }
+                        const hasPowerData = events.length > 0;
+                        const powerOn = hasPowerData ? computeOnInWindows(events, start, now, windows) : 0;
+                        const p = presenceInWindows(n._id, start, now, windows);
                         out.push({
                             id: n._id, name: n.name || n._id, os: n.osdesc || '',
-                            hasData, onPct, onMinutes: hasData ? onMin : null,
+                            hasData: p.hasData,
+                            onPct: p.hasData ? Math.round((p.occupiedMs / p.coverageMs * 100) * 10) / 10 : null,
+                            onMinutes: p.hasData ? Math.round(p.occupiedMs / 60000) : null,
+                            observedMinutes: p.hasData ? Math.round(p.coverageMs / 60000) : null,
+                            powerPct: hasPowerData ? Math.round((powerOn / totalMs * 100) * 10) / 10 : null,
+                            powerMinutes: hasPowerData ? Math.round(powerOn / 60000) : null,
                         });
                         if (currentJob) currentJob.processed++;
                         doneOne();
@@ -574,7 +801,10 @@ module.exports.usagectl = function (parent) {
                 }, function () {
                     currentJob = null;
                     out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
-                    sendJson(res, 200, { meshid, nodes: out, days, totalMinutes: Math.round(totalMs / 60000), weekMode: false });
+                    sendJson(res, 200, {
+                        meshid, nodes: out, days, totalMinutes: Math.round(totalMs / 60000), weekMode: false,
+                        presenceSince: presenceSinceMs(), metric: 'loggedInSessions',
+                    });
                 });
             });
             return;
@@ -611,6 +841,15 @@ module.exports.usagectl = function (parent) {
 
         if (action === 'progress') return sendJson(res, 200, currentJob || { idle: true });
 
+        if (action === 'presenceStatus') {
+            return sendJson(res, 200, {
+                since: presenceSinceMs(),
+                trackedNodes: Object.keys(presence.nodes).filter(id => presenceRecord(id)).length,
+                retentionDays: PRESENCE_RETENTION_DAYS,
+                metric: 'loggedInSessions',
+            });
+        }
+
         if (action === 'invalidate') {
             const wk = String(req.query.weekStart || '').trim();
             if (/^\d{4}-\d{2}-\d{2}$/.test(wk)) {
@@ -637,10 +876,17 @@ module.exports.usagectl = function (parent) {
         if (action === 'dataRange') {
             const db = obj.meshServer.db;
             const coll = db.powerfile || db.eventsfile;
-            if (!coll || typeof coll.aggregate !== 'function') return sendJson(res, 200, { min: null, max: null });
+            const pMin = presenceSinceMs();
+            if (!coll || typeof coll.aggregate !== 'function') {
+                return sendJson(res, 200, { min: pMin, max: null, presenceMin: pMin, powerMin: null });
+            }
             Promise.resolve(coll.aggregate([{ $group: { _id: null, min: { $min: '$time' }, max: { $max: '$time' } } }]).toArray()).then(r => {
                 const row = (r && r[0]) || {};
-                sendJson(res, 200, { min: row.min || null, max: row.max || null });
+                sendJson(res, 200, {
+                    // La métrique principale est désormais la présence humaine.
+                    min: pMin, max: row.max || null,
+                    presenceMin: pMin, powerMin: row.min || null,
+                });
             }).catch(e => sendJson(res, 500, { error: e.message }));
             return;
         }

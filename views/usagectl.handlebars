@@ -39,6 +39,7 @@
   .delta-flat { color: #888; }
   .progress { height: 16px; background: #eee; border-radius: 3px; overflow: hidden; margin: 6px 0; }
   .progress > span { display: block; height: 100%; background: #0d6efd; transition: width 0.3s; }
+  .metric-note { margin: 0 0 8px 0; padding: 7px 10px; background: #eef6ff; border-left: 3px solid #0d6efd; color: #345; font-size: 11px; }
   /* Heat-map */
   .heat-table { border-collapse: separate; border-spacing: 2px; }
   .heat-table th, .heat-table td { padding: 4px 6px; text-align: center; font-size: 11px; border: none; }
@@ -49,7 +50,9 @@
 </head>
 <body>
 
-<h2>Taux d'occupation <span id="cfgState" class="pill">prêt</span> <span id="cacheState" class="pill"></span></h2>
+<h2>Occupation réelle <span id="cfgState" class="pill ok">sessions OS</span> <span id="cacheState" class="pill"></span></h2>
+
+<div class="metric-note">Un poste est occupé lorsqu'au moins une session utilisateur est ouverte. Il redevient libre à la déconnexion de l'utilisateur ou dès que le PC s'éteint. Le taux d'allumage reste affiché séparément.</div>
 
 <div class="bar">
   <span>Mode :</span>
@@ -187,7 +190,7 @@
       var d = new Date(dataMin);
       var info = document.createElement('span');
       info.style.cssText = 'font-size:11px;color:#888;margin-left:8px';
-      info.textContent = 'données depuis ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+      info.textContent = 'présence mesurée depuis ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
       $('weekWrap').appendChild(info);
     }
   }).catch(function () { buildWeekOptions(null); });
@@ -200,10 +203,6 @@
   function modeLabelText(r) {
     if (r && r.weekMode) return ' (Lun-Ven 8h-18h — ' + escapeHtml(r.weekLabel || '') + ')';
     return $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
-  }
-  function periodLabelText(r) {
-    if (r && r.weekMode) return 'la semaine';
-    return r.days === 1 ? '24h' : (r.days + ' jours');
   }
   function applyFilter(rows, getName) {
     var f = $('filterInput').value.trim().toLowerCase();
@@ -246,6 +245,7 @@
       if (k === 'name') { va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase(); }
       else if (k === 'nodes') { va = a.nodes || 0; vb = b.nodes || 0; }
       else if (k === 'pct') { va = (a.nodesWithData === 0) ? -1 : (a.avgOnPct || 0); vb = (b.nodesWithData === 0) ? -1 : (b.avgOnPct || 0); }
+      else if (k === 'power') { va = a.avgPowerPct == null ? -1 : a.avgPowerPct; vb = b.avgPowerPct == null ? -1 : b.avgPowerPct; }
       else if (k === 'delta') {
         va = (a.deltaFromZero) ? 1e9 : (a.deltaRel == null ? -1e9 : a.deltaRel);
         vb = (b.deltaFromZero) ? 1e9 : (b.deltaRel == null ? -1e9 : b.deltaRel);
@@ -266,22 +266,22 @@
     var salles = applyFilter(r.salles || [], function (s) { return s.name; });
     if (!salles.length) { $('content').innerHTML = '<div class="empty">Aucune salle.</div>'; return; }
     salles = sortSalles(salles);
-    var periodLabel = periodLabelText(r), modeLabel = modeLabelText(r);
-    var totalLabel = formatHm(r.totalMinutes || 0);
+    var modeLabel = modeLabelText(r);
     var showDelta = r.prevWeekAvailable;
     var thStyle = 'cursor:pointer;user-select:none';
-    var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — sur ' + periodLabel + modeLabel + ' = <span style="color:#0d6efd">' + totalLabel + '</span> dispo</h3></div>'
+    var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — occupation par sessions ouvertes' + modeLabel + '</h3></div>'
              + '<table><thead><tr>'
              + '<th style="' + thStyle + '" data-sort="name">Salle' + sortArrow('name') + '</th>'
              + '<th style="width:80px;' + thStyle + '" data-sort="nodes">Postes' + sortArrow('nodes') + '</th>'
-             + '<th style="width:200px;' + thStyle + '" data-sort="pct">Taux moyen' + sortArrow('pct') + '</th>'
+             + '<th style="width:200px;' + thStyle + '" data-sort="pct">Occupation' + sortArrow('pct') + '</th>'
              + '<th style="width:100px;' + thStyle + '" data-sort="pct">%' + sortArrow('pct') + '</th>'
              + (showDelta ? '<th style="width:100px;' + thStyle + '" data-sort="delta">Δ vs S-1' + sortArrow('delta') + '</th>' : '')
-             + '<th style="width:220px;' + thStyle + '" data-sort="hours">Heures moy./poste' + sortArrow('hours') + '</th>'
+             + '<th style="width:110px;' + thStyle + '" data-sort="power">Allumé' + sortArrow('power') + '</th>'
+             + '<th style="width:220px;' + thStyle + '" data-sort="hours">Temps occupé moy.' + sortArrow('hours') + '</th>'
              + '</tr></thead><tbody>';
     salles.forEach(function (s) {
       var noData = (s.nodesWithData === 0);
-      var postesLabel = s.nodes + (s.nodesWithData != null && s.nodesWithData < s.nodes ? ' <span style="color:#aaa;font-size:11px">(' + s.nodesWithData + ' data)</span>' : '');
+      var postesLabel = s.nodes + (s.nodesWithData != null && s.nodesWithData < s.nodes ? ' <span style="color:#aaa;font-size:11px">(' + s.nodesWithData + ' suivis)</span>' : '');
       var deltaCell = '';
       if (showDelta) {
         if (s.deltaFromZero) { deltaCell = '<td class="delta-up" title="était à 0% la semaine précédente">↑ nouveau</td>'; }
@@ -298,7 +298,8 @@
             + '<td>' + (noData ? '<span style="color:#aaa;font-size:11px">pas de données</span>' : occBar(s.avgOnPct)) + '</td>'
             + '<td class="occLabel">' + (noData ? '—' : (s.avgOnPct + ' %')) + '</td>'
             + deltaCell
-            + '<td>' + (noData ? '—' : (formatHm(s.avgOnMinutes) + ' / ' + totalLabel)) + '</td>'
+            + '<td>' + (s.avgPowerPct == null ? '—' : (s.avgPowerPct + ' %')) + '</td>'
+            + '<td>' + (noData ? '—' : (formatHm(s.avgOnMinutes) + ' / ' + formatHm(s.avgObservedMinutes))) + '</td>'
             + '</tr>';
     });
     html += '</tbody></table>';
@@ -327,19 +328,19 @@
   function renderSalleDetail() {
     var r = lastDetailResult; if (!r) return;
     var nodes = applyFilter(r.nodes || [], function (n) { return n.name; });
-    var totalLabel = formatHm(r.totalMinutes || 0);
     var html = '<div class="hdr">'
              + '<button class="back" id="backBtn">← Retour</button>'
-             + '<h3>Postes (' + nodes.length + ') — ' + escapeHtml(r.weekLabel || '') + ' = <span style="color:#0d6efd">' + totalLabel + '</span> dispo</h3>'
+             + '<h3>Postes (' + nodes.length + ') — ' + escapeHtml(r.weekLabel || '') + '</h3>'
              + '</div>';
     if (!nodes.length) html += '<div class="empty">Aucun poste.</div>';
     else {
       var showOff = r.weekMode;
       html += '<table><thead><tr>'
             + '<th>Poste</th><th>OS</th>'
-            + '<th style="width:200px">Taux d\'occupation</th>'
+            + '<th style="width:200px">Occupation (session)</th>'
             + '<th style="width:100px">%</th>'
-            + '<th style="width:200px">Heures cours</th>'
+            + '<th style="width:180px">Temps occupé / observé</th>'
+            + '<th style="width:100px">Allumé</th>'
             + (showOff ? '<th style="width:130px">Hors heures</th>' : '')
             + '</tr></thead><tbody>';
       nodes.forEach(function (n) {
@@ -349,7 +350,8 @@
               + '<td style="font-size:11px;color:#666">' + escapeHtml(n.os) + '</td>'
               + '<td>' + (hasData ? occBar(n.onPct) : '<span style="color:#aaa;font-size:11px">pas de données</span>') + '</td>'
               + '<td class="occLabel">' + (hasData ? (n.onPct + ' %') : '—') + '</td>'
-              + '<td>' + (hasData ? (formatHm(n.onMinutes) + ' / ' + totalLabel) : '—') + '</td>'
+              + '<td>' + (hasData ? (formatHm(n.onMinutes) + ' / ' + formatHm(n.observedMinutes)) : '—') + '</td>'
+              + '<td>' + (n.powerPct == null ? '—' : (n.powerPct + ' %')) + '</td>'
               + (showOff ? '<td>' + (n.offMinutes != null ? formatHm(n.offMinutes) : '—') + '</td>' : '')
               + '</tr>';
       });
@@ -378,7 +380,7 @@
     (r.salles || []).forEach(function (s) {
       selOpts += '<option value="' + escapeHtml(s.meshid) + '"' + (r.meshid === s.meshid ? ' selected' : '') + '>' + escapeHtml(s.name) + '</option>';
     });
-    var html = '<div class="hdr"><h3>Heat-map — ' + escapeHtml(r.meshName || '') + ' (' + r.nodesCount + ' postes) — ' + escapeHtml(r.weekLabel || '') + '</h3>'
+    var html = '<div class="hdr"><h3>Heat-map des sessions ouvertes — ' + escapeHtml(r.meshName || '') + ' (' + r.nodesCount + ' postes suivis) — ' + escapeHtml(r.weekLabel || '') + '</h3>'
              + '<select id="heatMeshSel">' + selOpts + '</select></div>';
     html += '<table class="heat-table"><thead><tr><th></th>';
     for (var h = 8; h < 18; h++) html += '<th>' + h + 'h</th>';
@@ -387,14 +389,16 @@
       html += '<tr><th>' + days[d] + '</th>';
       for (var hh = 0; hh < 10; hh++) {
         var v = r.grid[d * 10 + hh];
-        var cellClass = (r.nodesCount === 0) ? 'heat-cell empty-cell' : 'heat-cell';
-        var bg = (r.nodesCount === 0) ? '' : ('background:' + heatColor(v));
-        html += '<td><div class="' + cellClass + '" style="' + bg + '" title="' + days[d] + ' ' + (hh + 8) + 'h-' + (hh + 9) + 'h : ' + v + '%">' + (r.nodesCount === 0 ? '—' : v + '%') + '</div></td>';
+        var emptyCell = (v == null);
+        var cellClass = emptyCell ? 'heat-cell empty-cell' : 'heat-cell';
+        var bg = emptyCell ? '' : ('background:' + heatColor(v));
+        var valueLabel = emptyCell ? '—' : (v + '%');
+        html += '<td><div class="' + cellClass + '" style="' + bg + '" title="' + days[d] + ' ' + (hh + 8) + 'h-' + (hh + 9) + 'h : ' + valueLabel + '">' + valueLabel + '</div></td>';
       }
       html += '</tr>';
     }
     html += '</tbody></table>';
-    html += '<div style="margin-top:10px;font-size:11px;color:#888">Vert = peu utilisé / Rouge = très utilisé. Moyenne sur les postes qui ont des données dans la fenêtre.</div>';
+    html += '<div style="margin-top:10px;font-size:11px;color:#888">Vert = peu occupé / Rouge = très occupé. Chaque case représente le temps avec au moins une session ouverte, rapporté au temps réellement observé.</div>';
     $('content').innerHTML = html;
     $('heatMeshSel').onchange = function () { currentMesh = this.value; loadHeatmap(); };
   }
@@ -451,16 +455,15 @@
     }).catch(function (e) { stopProgress(); $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>'; });
   }
   function renderTopPostes(r) {
-    var totalLabel = formatHm(r.totalMinutes || 0);
     function tbl(title, list) {
-      var h = '<h3>' + title + '</h3><table><thead><tr><th>Poste</th><th>Salle</th><th style="width:100px">%</th><th style="width:130px">Heures</th></tr></thead><tbody>';
+      var h = '<h3>' + title + '</h3><table><thead><tr><th>Poste</th><th>Salle</th><th style="width:100px">%</th><th style="width:160px">Occupé / observé</th></tr></thead><tbody>';
       list.forEach(function (n) {
-        h += '<tr><td>' + escapeHtml(n.name) + '</td><td>' + escapeHtml(n.mesh) + '</td><td class="occLabel">' + n.onPct + ' %</td><td>' + formatHm(n.onMinutes) + '</td></tr>';
+        h += '<tr><td>' + escapeHtml(n.name) + '</td><td>' + escapeHtml(n.mesh) + '</td><td class="occLabel">' + n.onPct + ' %</td><td>' + formatHm(n.onMinutes) + ' / ' + formatHm(n.observedMinutes) + '</td></tr>';
       });
       h += '</tbody></table>';
       return h;
     }
-    var html = '<div class="hdr"><h3>Top postes — ' + escapeHtml(r.weekLabel || '') + ' (' + totalLabel + ' dispo)</h3></div>'
+    var html = '<div class="hdr"><h3>Top postes occupés — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
              + '<div class="top-cols">'
              + '<div>' + tbl('🔥 Les 10 plus utilisés', r.top || []) + '</div>'
              + '<div>' + tbl('💤 Les 10 moins utilisés', r.bottom || []) + '</div>'
@@ -625,14 +628,18 @@
 
   function reportInnerWeek(salles, heatmap, hors, top) {
     var weekLabel = salles.weekLabel || '';
-    var totalDispo = formatHm(salles.totalMinutes || 0);
     var sallesList = salles.salles || [];
     var withDataTotal = sallesList.reduce(function (s, x) { return s + (x.nodesWithData || 0); }, 0);
     var nodesTotal = sallesList.reduce(function (s, x) { return s + (x.nodes || 0); }, 0);
     var avgGlobal = 0;
     if (sallesList.length) {
-      var sum = sallesList.reduce(function (s, x) { return s + (x.avgOnPct || 0) * (x.nodesWithData || 0); }, 0);
-      avgGlobal = withDataTotal ? Math.round((sum / withDataTotal) * 10) / 10 : 0;
+      var weighted = sallesList.reduce(function (a, x) {
+        var capacity = (x.avgObservedMinutes || 0) * (x.nodesWithData || 0);
+        a.used += (x.avgOnPct || 0) * capacity;
+        a.capacity += capacity;
+        return a;
+      }, { used: 0, capacity: 0 });
+      avgGlobal = weighted.capacity ? Math.round((weighted.used / weighted.capacity) * 10) / 10 : 0;
     }
     var horsAvg = 0;
     if (hors && hors.nodes && hors.nodes.length) {
@@ -645,8 +652,8 @@
 
     // Cover
     html += '<div class="cover">'
-          + '<h1>Taux d\'occupation des postes</h1>'
-          + '<div class="sub">' + escapeHtml(weekLabel) + ' — Lun-Ven 8h-18h (' + totalDispo + ' disponibles)</div>'
+          + '<h1>Occupation réelle des postes</h1>'
+          + '<div class="sub">' + escapeHtml(weekLabel) + ' — Lun-Ven 8h-18h · présence mesurée par sessions OS ouvertes</div>'
           + '<div class="meta">Rapport généré le ' + nowLabel + ' · ' + sallesList.length + ' salles · ' + nodesTotal + ' postes</div>'
           + '</div>';
 
@@ -654,16 +661,16 @@
     html += '<div class="kpis">'
           + '<div class="kpi"><div class="val">' + avgGlobal + ' %</div><div class="lbl">Occupation moyenne</div></div>'
           + '<div class="kpi"><div class="val">' + sallesList.length + '</div><div class="lbl">Salles</div></div>'
-          + '<div class="kpi"><div class="val">' + withDataTotal + ' / ' + nodesTotal + '</div><div class="lbl">Postes avec données</div></div>'
+          + '<div class="kpi"><div class="val">' + withDataTotal + ' / ' + nodesTotal + '</div><div class="lbl">Postes suivis</div></div>'
           + '<div class="kpi"><div class="val">' + horsAvg + ' %</div><div class="lbl">Gaspillage moyen (hors heures)</div></div>'
           + '</div>';
 
     // Salles table
     html += '<h2>Détail par salle</h2>';
     var showDelta = salles.prevWeekAvailable;
-    html += '<table><thead><tr><th>Salle</th><th style="width:55px">Postes</th><th style="width:120px">Taux moyen</th><th style="width:60px">%</th>'
+    html += '<table><thead><tr><th>Salle</th><th style="width:55px">Postes</th><th style="width:105px">Occupation</th><th style="width:45px">%</th>'
           + (showDelta ? '<th style="width:80px">Δ S-1</th>' : '')
-          + '<th style="width:120px">Heures moy/poste</th></tr></thead><tbody>';
+          + '<th style="width:55px">Allumé</th><th style="width:120px">Occupé / observé</th></tr></thead><tbody>';
     sallesList.forEach(function (s) {
       var noData = (s.nodesWithData === 0);
       var deltaCell = '';
@@ -681,14 +688,15 @@
             + '<td>' + (noData ? '<span class="muted">pas de données</span>' : barCell(s.avgOnPct)) + '</td>'
             + '<td><b>' + (noData ? '—' : s.avgOnPct + ' %') + '</b></td>'
             + deltaCell
-            + '<td>' + (noData ? '—' : formatHm(s.avgOnMinutes)) + '</td></tr>';
+            + '<td>' + (s.avgPowerPct == null ? '—' : s.avgPowerPct + ' %') + '</td>'
+            + '<td>' + (noData ? '—' : formatHm(s.avgOnMinutes) + ' / ' + formatHm(s.avgObservedMinutes)) + '</td></tr>';
     });
     html += '</tbody></table>';
 
     // Page 2 : Heat-map
     html += '<div class="page-break"></div>';
-    html += '<h2>Heat-map — fréquentation horaire</h2>';
-    html += '<div class="muted" style="margin-bottom:10px">Moyenne d\'occupation par créneau d\'une heure, sur les ' + heatmap.nodesCount + ' postes avec données.</div>';
+    html += '<h2>Heat-map — occupation horaire</h2>';
+    html += '<div class="muted" style="margin-bottom:10px">Temps avec une session ouverte par créneau d\'une heure, sur les ' + heatmap.nodesCount + ' postes suivis.</div>';
     html += '<table class="heat avoid-break"><thead><tr><th></th>';
     for (var h = 8; h < 18; h++) html += '<th>' + h + 'h</th>';
     html += '</tr></thead><tbody>';
@@ -697,7 +705,7 @@
       html += '<tr><th>' + days[d] + '</th>';
       for (var hh = 0; hh < 10; hh++) {
         var v = heatmap.grid[d * 10 + hh];
-        if (heatmap.nodesCount === 0) html += '<td><div class="c empty-c">—</div></td>';
+        if (v == null) html += '<td><div class="c empty-c">—</div></td>';
         else html += '<td><div class="c" style="background:' + heatColor(v) + '">' + v + '%</div></td>';
       }
       html += '</tr>';
@@ -734,32 +742,32 @@
   }
 
   function topTable(list) {
-    var h = '<table><thead><tr><th>Poste</th><th>Salle</th><th style="width:50px">%</th><th style="width:70px">Heures</th></tr></thead><tbody>';
+    var h = '<table><thead><tr><th>Poste</th><th>Salle</th><th style="width:50px">%</th><th style="width:95px">Occupé / observé</th></tr></thead><tbody>';
     (list || []).forEach(function (n) {
       h += '<tr><td><b>' + escapeHtml(n.name) + '</b></td><td>' + escapeHtml(n.mesh) + '</td>'
-         + '<td><b>' + n.onPct + ' %</b></td><td>' + formatHm(n.onMinutes) + '</td></tr>';
+         + '<td><b>' + n.onPct + ' %</b></td><td>' + formatHm(n.onMinutes) + ' / ' + formatHm(n.observedMinutes) + '</td></tr>';
     });
     h += '</tbody></table>';
     return h;
   }
 
   function reportInnerRolling(salles) {
-    var totalDispo = formatHm(salles.totalMinutes || 0);
     var sallesList = salles.salles || [];
     var now = new Date();
     var nowLabel = pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
     var periodLabel = salles.days === 1 ? '24 dernières heures' : (salles.days + ' derniers jours');
     var html = '';
-    html += '<div class="cover"><h1>Taux d\'occupation des postes</h1>'
-          + '<div class="sub">Période glissante — ' + periodLabel + ' (' + totalDispo + ' disponibles)</div>'
+    html += '<div class="cover"><h1>Occupation réelle des postes</h1>'
+          + '<div class="sub">Période glissante — ' + periodLabel + ' · sessions OS ouvertes</div>'
           + '<div class="meta">Rapport généré le ' + nowLabel + '</div></div>';
-    html += '<h2>Détail par salle</h2><table><thead><tr><th>Salle</th><th>Postes</th><th>Taux moyen</th><th>%</th><th>Heures moy/poste</th></tr></thead><tbody>';
+    html += '<h2>Détail par salle</h2><table><thead><tr><th>Salle</th><th>Postes</th><th>Occupation</th><th>%</th><th>Allumé</th><th>Occupé / observé</th></tr></thead><tbody>';
     sallesList.forEach(function (s) {
       var noData = (s.nodesWithData === 0);
       html += '<tr><td><b>' + escapeHtml(s.name) + '</b></td><td>' + s.nodes + '</td>'
             + '<td>' + (noData ? '<span class="muted">—</span>' : barCell(s.avgOnPct)) + '</td>'
             + '<td><b>' + (noData ? '—' : s.avgOnPct + ' %') + '</b></td>'
-            + '<td>' + (noData ? '—' : formatHm(s.avgOnMinutes)) + '</td></tr>';
+            + '<td>' + (s.avgPowerPct == null ? '—' : s.avgPowerPct + ' %') + '</td>'
+            + '<td>' + (noData ? '—' : formatHm(s.avgOnMinutes) + ' / ' + formatHm(s.avgObservedMinutes)) + '</td></tr>';
     });
     html += '</tbody></table>';
     html += '<div class="muted" style="margin-top:18px;text-align:center;font-size:9px">usagectl · ' + nowLabel + '</div>';
