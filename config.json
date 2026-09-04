@@ -1,7 +1,7 @@
 {
   "name": "usagectl",
   "shortName": "usagectl",
-  "version": "0.0.35",
+  "version": "0.0.36",
   "author": "V3locidad",
   "description": "Occupation réelle par salle et par poste, calculée à partir des sessions OS ouvertes remontées par MeshAgent. Le taux d'allumage et le gaspillage hors heures restent affichés séparément.",
   "hasAdminPanel": true,

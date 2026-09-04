@@ -84,6 +84,9 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     const plugin = require('../usagectl').usagectl({ parent: meshServer });
     const agent = { dbNodeKey: nodeId, dbMeshKey: meshId };
 
+    // MeshCentral charge le plugin alors que les agents peuvent être déjà
+    // connectés : tous les nœuds doivent être amorcés immédiatement.
+    plugin.server_startup();
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
     now = new Date(2026, 7, 31, 9, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['DOMAINE\\alice'] }, agent);

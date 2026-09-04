@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.36
+
+- Initialisation immédiate de tous les nœuds au démarrage ou au rechargement du plugin.
+- Un poste hors ligne est initialisé comme libre ; un poste en ligne reprend sa liste de sessions connue.
+- Affichage de l'heure exacte de début de collecte pour éviter de confondre une minute d'observation avec une semaine complète.
+
 ## 0.0.35
 
 - Calcul du taux d'occupation à partir des sessions OS ouvertes (`coreinfo.users`).

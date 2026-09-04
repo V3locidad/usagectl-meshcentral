@@ -190,7 +190,8 @@
       var d = new Date(dataMin);
       var info = document.createElement('span');
       info.style.cssText = 'font-size:11px;color:#888;margin-left:8px';
-      info.textContent = 'présence mesurée depuis ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+      info.textContent = 'présence mesurée depuis ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear()
+                       + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
       $('weekWrap').appendChild(info);
     }
   }).catch(function () { buildWeekOptions(null); });

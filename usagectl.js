@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 const CACHE_FILE = path.join(__dirname, 'usagectl-cache.json');
 const PRESENCE_VERSION = 1;
 const PRESENCE_FILE = path.join(__dirname, 'usagectl-presence.json');
@@ -232,7 +232,9 @@ module.exports.usagectl = function (parent) {
             obj.meshServer.__usagectlPresenceListener = obj;
 
             // Fermer d'abord les états éventuellement restés ouverts après un
-            // arrêt brutal, puis réamorcer les agents en ligne depuis le nœud DB.
+            // arrêt brutal, puis amorcer TOUS les nœuds. Sans cet amorçage, seuls
+            // les agents qui changent de session après le chargement du plugin
+            // apparaissent comme suivis dans l'interface MeshCentral.
             const now = Date.now();
             Object.keys(presence.nodes).forEach(id => {
                 const rec = presenceRecord(id);
@@ -243,10 +245,15 @@ module.exports.usagectl = function (parent) {
             if (db && typeof db.GetAllType === 'function') {
                 db.GetAllType('node', function (_err, nodes) {
                     (nodes || []).forEach(n => {
-                        if (n && n._id && online && online[n._id] && Array.isArray(n.users)) {
-                            const count = uniqueUserCount(n.users);
-                            if (count != null) recordPresence(n._id, n.meshid, count, Date.now());
-                        }
+                        if (!n || !n._id) return;
+                        const recent = presenceRecord(n._id);
+                        // Ne pas écraser un coreinfo arrivé pendant la lecture DB.
+                        if (recent && Number(recent.lastSeenAt) > now) return;
+                        const isOnline = !!(online && online[n._id]);
+                        // Une liste absente ne prouve pas une présence. On part
+                        // donc de zéro jusqu'au prochain coreinfo de l'agent.
+                        const count = (isOnline && Array.isArray(n.users)) ? uniqueUserCount(n.users) : 0;
+                        recordPresence(n._id, n.meshid, count == null ? 0 : count, Date.now());
                     });
                 });
             }
