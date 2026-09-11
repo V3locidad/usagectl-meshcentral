@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.37
+
+- Séparation des durées moyennes en trois colonnes : temps utilisé, temps allumé et temps de semaine déjà mesuré.
+- Ajout des mêmes durées dans le détail des postes et les rapports PDF.
+- Le taux d'allumage reste affiché dans une colonne distincte de sa durée.
+
 ## 0.0.36
 
 - Initialisation immédiate de tous les nœuds au démarrage ou au rechargement du plugin.

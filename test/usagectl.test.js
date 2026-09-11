@@ -106,6 +106,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(body.salles[0].avgOnMinutes, 120);
     assert.equal(body.salles[0].avgObservedMinutes, 240);
     assert.equal(body.salles[0].avgPowerPct, 100);
+    assert.equal(body.salles[0].avgPowerMinutes, 240);
 
     // Une déconnexion agent clôt une session encore ouverte.
     now = new Date(2026, 7, 31, 13, 0, 0, 0).getTime();

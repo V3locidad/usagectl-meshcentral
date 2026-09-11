@@ -18,6 +18,12 @@ Le plugin affiche séparément :
 - l'**allumage**, issu de la power timeline MeshCentral ;
 - l'allumage hors horaires, qui reste un indicateur de gaspillage énergétique.
 
+Dans la vue Salles, les durées sont réparties en trois colonnes :
+
+- **Temps utilisé** : durée moyenne avec une session utilisateur ouverte ;
+- **Temps allumé** : durée moyenne pendant laquelle le poste était sous tension ;
+- **Temps semaine** : période déjà mesurée dans la semaine sélectionnée, jusqu'à 50 heures pour une semaine complète (lundi-vendredi, 8 h-18 h).
+
 Le fichier `usagectl-presence.json` ne contient aucun nom de compte : uniquement des horodatages et des nombres de sessions.
 
 ## Important après la mise à jour
