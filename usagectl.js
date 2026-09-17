@@ -30,6 +30,7 @@ const LOGIN_POLL_MS = 5000;
 const LOGIN_LOGON_LOOKBACK_MS = 4 * 60 * 60 * 1000;
 const LOGIN_LOOKUP_TIMEOUT_MS = 15000;
 const LOGIN_LOOKUP_MAX_ATTEMPTS = 2;
+const LOGIN_HISTORY_MAX_PER_NODE = 200;
 const LOGIN_SESSION_ID = 'usagectl-login-monitor';
 const CACHE_TTL_LIVE_MS = 5 * 60 * 1000;
 const CACHE_MAX_WEEKS = 20;
@@ -301,26 +302,27 @@ module.exports.usagectl = function (parent) {
             '  if ($at -gt 0) { $v = $v.Substring(0, $at) }',
             '  return $v',
             '}',
-            '$found = $null',
+            '$lookback = ' + String(LOGIN_LOGON_LOOKBACK_MS),
+            '$cutoff = (Get-Date).AddMilliseconds(-$lookback)',
+            '$cimError = $false',
             'try {',
             "  $types = @(2, 10, 11, 12)",
-            '  $hits = foreach ($link in @(Get-CimInstance -ClassName Win32_LoggedOnUser -ErrorAction Stop)) {',
-            '    $account = $link.Antecedent',
-            '    $session = $link.Dependent',
-            '    if (($null -eq $account) -or ($null -eq $session)) { continue }',
-            '    $key = Get-UsagectlUserKey ([string]$account.Name)',
-            '    if (($wanted -contains $key) -and ($types -contains [int]$session.LogonType) -and ($null -ne $session.StartTime)) {',
-            '      [pscustomobject]@{ Time = [datetime]$session.StartTime }',
+            '  $sessions = @(Get-CimInstance -ClassName Win32_LogonSession -ErrorAction Stop | Where-Object {',
+            '    ($types -contains [int]$_.LogonType) -and ($null -ne $_.StartTime) -and ([datetime]$_.StartTime -ge $cutoff)',
+            '  } | Sort-Object StartTime -Descending)',
+            '  foreach ($session in $sessions) {',
+            "    $query = 'Associators of {Win32_LogonSession.LogonId=' + $session.LogonId + '} Where AssocClass=Win32_LoggedOnUser Role=Dependent'",
+            '    foreach ($account in @(Get-CimInstance -Query $query -ErrorAction Stop)) {',
+            '      $key = Get-UsagectlUserKey ([string]$account.Name)',
+            '      if ($wanted -contains $key) {',
+            "        Write-Output ('USAGECTL_LOGON_CIM=' + ([datetime]$session.StartTime).ToUniversalTime().ToString('o'))",
+            '        exit 0',
+            '      }',
             '    }',
             '  }',
-            '  $found = $hits | Sort-Object Time -Descending | Select-Object -First 1',
-            '} catch {}',
-            'if ($null -ne $found) {',
-            "  Write-Output ('USAGECTL_LOGON_CIM=' + $found.Time.ToUniversalTime().ToString('o'))",
-            '  exit 0',
-            '}',
+            '} catch { $cimError = $true }',
+            '$eventError = $false',
             'try {',
-            '  $lookback = ' + String(LOGIN_LOGON_LOOKBACK_MS),
             "  $xpath = \"*[System[(EventID=4624) and TimeCreated[timediff(@SystemTime) <= $lookback]]] and *[EventData[(Data[@Name='LogonType']='2' or Data[@Name='LogonType']='10' or Data[@Name='LogonType']='11' or Data[@Name='LogonType']='12')]]\"",
             "  foreach ($event in @(Get-WinEvent -LogName Security -FilterXPath $xpath -MaxEvents 64 -ErrorAction Stop)) {",
             '    $xml = [xml]$event.ToXml()',
@@ -332,8 +334,8 @@ module.exports.usagectl = function (parent) {
             '      exit 0',
             '    }',
             '  }',
-            '} catch {}',
-            "Write-Output 'USAGECTL_LOGON_NOT_FOUND'",
+            '} catch { $eventError = $true }',
+            "if ($cimError -and $eventError) { Write-Output 'USAGECTL_LOGON_ERROR' } else { Write-Output 'USAGECTL_LOGON_NOT_FOUND' }",
         ].join('\r\n');
     }
     function requestLogonStart(nodeId, agent) {
@@ -353,10 +355,11 @@ module.exports.usagectl = function (parent) {
         }
         return sent;
     }
-    function useLogonLookupFallback(nodeId) {
+    function useLogonLookupFallback(nodeId, reason) {
         const rec = loginData.nodes[nodeId];
         if (!rec || !rec.pending || rec.pending.logonSource) return;
         rec.pending.logonSource = 'meshagent-session';
+        rec.pending.logonFailure = reason || 'unavailable';
         loginRuntimeState(nodeId).logonLookupFailed = true;
         saveLoginSoon();
     }
@@ -377,7 +380,7 @@ module.exports.usagectl = function (parent) {
                 return;
             }
             if (now - lookupAt < LOGIN_LOOKUP_TIMEOUT_MS) return;
-            useLogonLookupFallback(nodeId);
+            useLogonLookupFallback(nodeId, 'timeout');
         }
         if (!force && Number(loginPollAt[nodeId]) + LOGIN_POLL_MS > now) return;
         const sessionid = loginSessionId(pending);
@@ -415,7 +418,8 @@ module.exports.usagectl = function (parent) {
         if (!rec || !rec.pending) return;
         const startAt = Number(rec.pending.startAt);
         const endAt = Number.isFinite(readyAt) ? readyAt : Date.now();
-        rec.events.push([startAt, endAt, Math.max(0, endAt - startAt), status || 'ready', rec.pending.logonSource || 'meshagent-session']);
+        rec.events.push([startAt, endAt, Math.max(0, endAt - startAt), status || 'ready',
+            rec.pending.logonSource || 'meshagent-session', rec.pending.logonFailure || null]);
         delete rec.pending;
         delete loginPollAt[nodeId];
         delete runtimeSessionIds[nodeId];
@@ -464,7 +468,7 @@ module.exports.usagectl = function (parent) {
                 delete state.logonLookupFailed;
                 saveLoginSoon();
             } else {
-                useLogonLookupFallback(nodeId);
+                useLogonLookupFallback(nodeId, result.indexOf('USAGECTL_LOGON_ERROR') >= 0 ? 'command-error' : 'not-found');
             }
             pollLogin(nodeId, agent, true);
             return true;
@@ -1275,6 +1279,24 @@ module.exports.usagectl = function (parent) {
                     const latest = completed.slice().sort((a, b) => Number(b[1]) - Number(a[1]))[0];
                     const pending = rec && rec.pending && Number(rec.pending.startAt) >= range.start && Number(rec.pending.startAt) < range.end
                         ? rec.pending : null;
+                    const history = events.slice().sort((a, b) => Number(b[0]) - Number(a[0])).slice(0, LOGIN_HISTORY_MAX_PER_NODE).map(e => {
+                        const source = String(e[4] || 'meshagent-session');
+                        return {
+                            startAt: Number(e[0]), endAt: Number(e[1]), durationMs: Number(e[2]),
+                            status: String(e[3] || 'unknown'), source,
+                            startReliable: source !== 'meshagent-session',
+                            failureReason: e[5] ? String(e[5]) : null,
+                        };
+                    });
+                    if (pending) {
+                        const source = String(pending.logonSource || '');
+                        history.unshift({
+                            startAt: Number(pending.startAt), endAt: null,
+                            durationMs: Math.max(0, now - Number(pending.startAt)), status: 'pending', source,
+                            startReliable: source && source !== 'meshagent-session',
+                            failureReason: pending.logonFailure || null,
+                        });
+                    }
                     const pendingState = runtimeLoginState[n._id] || {};
                     let pendingStage = null;
                     if (pending) {
@@ -1298,6 +1320,9 @@ module.exports.usagectl = function (parent) {
                         pendingStartedAt: pending ? Number(pending.startAt) : null,
                         pendingMs: pending ? Math.max(0, now - Number(pending.startAt)) : null,
                         pendingStage,
+                        history,
+                        historyCount: events.length + (pending ? 1 : 0),
+                        historyTruncated: events.length > LOGIN_HISTORY_MAX_PER_NODE,
                     };
                 }).sort((a, b) => {
                     if (a.pendingStartedAt && !b.pendingStartedAt) return -1;

@@ -39,6 +39,10 @@
   .delta-flat { color: #888; }
   .login-pending { color: #d97706; font-weight: bold; }
   .login-ready { color: #198754; }
+  .login-failed { color: #b45309; font-weight: bold; }
+  .login-history-row > td { background: #fafcff !important; padding: 10px 18px 14px 34px; }
+  .login-history-row table { background: #fff; margin-top: 6px; }
+  .login-history-row th, .login-history-row td { padding: 6px 8px; font-size: 11px; }
   .progress { height: 16px; background: #eee; border-radius: 3px; overflow: hidden; margin: 6px 0; }
   .progress > span { display: block; height: 100%; background: #0d6efd; transition: width 0.3s; }
   .metric-note { margin: 0 0 8px 0; padding: 7px 10px; background: #eef6ff; border-left: 3px solid #0d6efd; color: #345; font-size: 11px; }
@@ -129,6 +133,32 @@
     if (m > 0) return m + 'min ' + (s < 10 ? '0' + s : s) + 's';
     return s + 's';
   }
+  function formatDateTimeMs(ms) {
+    if (ms == null || !isFinite(ms)) return '—';
+    var d = new Date(ms);
+    return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear()
+         + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+  function loginSourceLabel(source) {
+    if (source === 'windows-logon-session') return 'Session Windows';
+    if (source === 'windows-event-4624') return 'Événement 4624';
+    if (source === 'meshagent-session') return 'Heure Windows indisponible';
+    return source ? source : 'Identification en cours';
+  }
+  function loginFailureLabel(reason) {
+    if (reason === 'timeout') return 'lecture Windows expirée';
+    if (reason === 'command-error') return 'commande Windows en erreur';
+    if (reason === 'not-found') return 'aucune session correspondante trouvée';
+    return reason ? reason : '';
+  }
+  function loginStatusHtml(status) {
+    if (status === 'pending') return '<span class="login-pending">⏳ En cours</span>';
+    if (status === 'ready') return '<span class="login-ready">✓ Réussie</span>';
+    if (status === 'start-unavailable') return '<span class="login-failed">⚠ Heure de départ indisponible</span>';
+    if (status === 'session-ended') return '<span class="login-failed">✕ Session fermée avant le bureau</span>';
+    if (status === 'agent-offline') return '<span class="login-failed">✕ PC ou agent déconnecté</span>';
+    return '<span class="login-failed">✕ Non aboutie</span>';
+  }
   function occBar(pct) {
     var p = Math.max(0, Math.min(100, pct || 0));
     var lvl = (p < 10) ? 0 : (p < 30) ? 1 : (p < 60) ? 2 : 3;
@@ -152,6 +182,7 @@
   var lastSallesResult = null;
   var lastDetailResult = null;
   var lastLoginResult = null;
+  var expandedLoginHistory = {};
   var inDetail = false;
   var detailMeshid = null;
   var progressTimer = null;
@@ -535,8 +566,9 @@
             + '<th style="width:130px">Maximum</th>'
             + '<th style="width:90px">Mesures</th>'
             + '<th style="width:120px">Non abouties</th>'
+            + '<th style="width:120px">Historique</th>'
             + '</tr></thead><tbody>';
-      rows.forEach(function (n) {
+      rows.forEach(function (n, index) {
         var pendingDetail = '';
         if (n.pendingStage === 'waiting-logon-time') pendingDetail = 'lecture de l’heure de connexion Windows';
         else if (n.pendingStage === 'waiting-agent') pendingDetail = 'attente de la réponse de MeshAgent';
@@ -545,7 +577,13 @@
         var state = n.pendingStartedAt
           ? '<span class="login-pending">⏳ En cours depuis ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>'
             + (pendingDetail ? '<div style="font-size:11px;color:#777;font-weight:normal;margin-top:2px">' + escapeHtml(pendingDetail) + '</div>' : '')
-          : (n.count ? '<span class="login-ready">✓ Mesuré</span>' : '<span style="color:#999">En attente d’une connexion</span>');
+          : (n.count ? '<span class="login-ready">✓ Mesuré</span>'
+            : (n.failed ? '<span class="login-failed">⚠ ' + n.failed + ' tentative' + (n.failed > 1 ? 's' : '') + ' non aboutie' + (n.failed > 1 ? 's' : '') + '</span>'
+              : '<span style="color:#999">En attente d’une connexion</span>'));
+        var historyExpanded = !!expandedLoginHistory[n.id];
+        var historyButton = n.historyCount
+          ? '<button class="login-history-btn" data-login-index="' + index + '">' + (historyExpanded ? 'Masquer' : 'Voir (' + n.historyCount + ')') + '</button>'
+          : '<span style="color:#999">—</span>';
         html += '<tr><td>' + escapeHtml(n.name) + '</td>'
               + '<td>' + escapeHtml(n.mesh) + '</td>'
               + '<td>' + state + '</td>'
@@ -553,12 +591,46 @@
               + '<td>' + formatDurationMs(n.avgMs) + '</td>'
               + '<td>' + formatDurationMs(n.maxMs) + '</td>'
               + '<td>' + n.count + '</td>'
-              + '<td>' + n.failed + '</td></tr>';
+              + '<td>' + n.failed + '</td>'
+              + '<td>' + historyButton + '</td></tr>'
+              + '<tr class="login-history-row" data-login-history="' + index + '" style="display:' + (historyExpanded ? 'table-row' : 'none') + '"><td colspan="9">' + renderLoginHistory(n) + '</td></tr>';
       });
       html += '</tbody></table>';
     }
     html += '<div style="margin-top:8px;font-size:11px;color:#777">Une tentative non aboutie correspond à une session fermée, à un agent déconnecté avant le démarrage d’explorer.exe ou à une heure de création de session indisponible. Aucun nom d’utilisateur n’est conservé.</div>';
     $('content').innerHTML = html;
+    Array.prototype.forEach.call(document.querySelectorAll('.login-history-btn'), function (button) {
+      button.onclick = function () {
+        var index = button.getAttribute('data-login-index');
+        var row = document.querySelector('[data-login-history="' + index + '"]');
+        if (!row) return;
+        var opening = row.style.display === 'none';
+        var node = rows[Number(index)];
+        if (node) expandedLoginHistory[node.id] = opening;
+        row.style.display = opening ? 'table-row' : 'none';
+        button.textContent = opening ? 'Masquer' : 'Voir (' + ((rows[Number(index)] || {}).historyCount || 0) + ')';
+      };
+    });
+  }
+
+  function renderLoginHistory(node) {
+    var history = node.history || [];
+    if (!history.length) return '<div style="color:#999">Aucune tentative sur la période sélectionnée.</div>';
+    var html = '<div style="font-weight:bold;margin-bottom:5px">Historique — ' + escapeHtml(node.name) + '</div>'
+             + '<table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
+    history.forEach(function (e) {
+      var reliable = !!e.startReliable;
+      var duration = (e.status === 'start-unavailable' || !reliable) ? '—' : formatDurationMs(e.durationMs);
+      var result = loginStatusHtml(e.status);
+      var failure = loginFailureLabel(e.failureReason);
+      if (failure) result += '<div style="font-size:10px;color:#777;margin-top:2px">' + escapeHtml(failure) + '</div>';
+      html += '<tr><td>' + (reliable ? formatDateTimeMs(e.startAt) : '<span style="color:#999">Indisponible</span>') + '</td>'
+            + '<td>' + (e.status === 'pending' ? '<span class="login-pending">En cours</span>' : formatDateTimeMs(e.endAt)) + '</td>'
+            + '<td>' + duration + '</td><td>' + result + '</td><td>' + escapeHtml(loginSourceLabel(e.source)) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    if (node.historyTruncated) html += '<div style="font-size:10px;color:#777">Affichage limité aux 200 tentatives les plus récentes.</div>';
+    return html;
   }
 
   // ====== Tabs ======
@@ -717,6 +789,8 @@
          + '.two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }'
          + '.login-pending-pdf { color: #d97706; font-weight: 700; }'
          + '.login-ready-pdf { color: #198754; font-weight: 700; }'
+         + '.login-pending, .login-failed { color: #b45309; font-weight: 700; }'
+         + '.login-ready { color: #198754; font-weight: 700; }'
          + '.footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 9px; color: #aaa; text-align: center; border-top: 1px solid #eee; padding-top: 3px; }'
          + '.muted { color: #888; }';
   }
@@ -877,6 +951,8 @@
         state = '<span class="login-pending-pdf">En cours · ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>';
       } else if (n.count) {
         state = '<span class="login-ready-pdf">Mesuré</span>';
+      } else if (n.failed) {
+        state = '<span class="login-failed">' + n.failed + ' non aboutie' + (n.failed > 1 ? 's' : '') + '</span>';
       } else {
         state = '<span class="muted">En attente</span>';
       }
@@ -889,6 +965,30 @@
     });
     html += '</tbody></table>';
     html += '<div class="muted" style="margin-top:6px;font-size:9px">Une tentative non aboutie correspond à une session fermée, à un agent déconnecté avant le démarrage d’explorer.exe ou à une heure de création de session indisponible. Aucun nom d’utilisateur n’est conservé.</div>';
+    var allHistory = [];
+    rows.forEach(function (n) {
+      (n.history || []).forEach(function (e) {
+        allHistory.push({ name: n.name, mesh: n.mesh, event: e });
+      });
+    });
+    allHistory.sort(function (a, b) { return Number(b.event.startAt) - Number(a.event.startAt); });
+    if (allHistory.length) {
+      html += '<h3 style="margin-top:18px">Historique détaillé</h3>'
+            + '<table><thead><tr><th>Poste</th><th>Salle</th><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
+      allHistory.forEach(function (item) {
+        var e = item.event;
+        var reliable = !!e.startReliable;
+        var duration = (e.status === 'start-unavailable' || !reliable) ? '—' : formatDurationMs(e.durationMs);
+        var result = loginStatusHtml(e.status);
+        var failure = loginFailureLabel(e.failureReason);
+        if (failure) result += '<div style="font-size:8px;color:#777">' + escapeHtml(failure) + '</div>';
+        html += '<tr><td><b>' + escapeHtml(item.name) + '</b></td><td>' + escapeHtml(item.mesh) + '</td>'
+              + '<td>' + (reliable ? formatDateTimeMs(e.startAt) : 'Indisponible') + '</td>'
+              + '<td>' + (e.status === 'pending' ? 'En cours' : formatDateTimeMs(e.endAt)) + '</td>'
+              + '<td>' + duration + '</td><td>' + result + '</td><td>' + escapeHtml(loginSourceLabel(e.source)) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
     return html;
   }
 

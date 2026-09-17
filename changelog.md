@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.42
+
+- Ajout d'un historique dépliable par poste avec le début Windows, la fin ou l'apparition du bureau, la durée, le résultat, la source de mesure et la raison d'un échec.
+- Les tentatives réussies, en cours et non abouties sont désormais toutes visibles dans l'interface et dans le rapport PDF.
+- Le résumé n'affiche plus « En attente d'une connexion » lorsqu'une tentative non aboutie existe.
+- Renforcement de la lecture `Win32_LogonSession` en utilisant explicitement l'association `Win32_LoggedOnUser` ; les erreurs et absences de session sont distinguées dans l'historique.
+
 ## 0.0.41
 
 - Le départ du chronomètre utilise désormais l'heure de création de la session interactive Windows (`Win32_LogonSession`), avec l'événement de sécurité 4624 en secours, au lieu de la notification tardive `coreinfo.users`.

@@ -40,6 +40,8 @@ La version 0.0.41 réinitialise les anciennes mesures de temps de connexion, car
 
 Les rapports PDF incluent une section dédiée au temps d'ouverture de session, avec les mêmes mesures que l'onglet, aussi bien pour une semaine précise que pour une période glissante.
 
+Chaque poste dispose d'un bouton **Historique** qui affiche toutes les tentatives de la période sélectionnée : début Windows, apparition du bureau ou fin, durée, résultat, source de mesure et raison d'un éventuel échec. Le même historique détaillé est ajouté aux rapports PDF.
+
 ## Important après la mise à jour
 
 MeshCentral expose l'état courant des sessions, mais ne conserve pas leur historique. La mesure de présence commence donc au premier démarrage de cette version du plugin. Les semaines antérieures restent disponibles pour les données électriques, mais pas pour l'occupation humaine.

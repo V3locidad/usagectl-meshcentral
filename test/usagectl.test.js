@@ -107,6 +107,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(aliceLookup.runAsUser, 0);
     assert.equal(aliceLookup.reply, true);
     assert.match(aliceLookup.cmds, /Win32_LoggedOnUser/);
+    assert.match(aliceLookup.cmds, /Associators of \{Win32_LogonSession\.LogonId=/);
     assert.match(aliceLookup.cmds, /EventID=4624/);
     assert.doesNotMatch(aliceLookup.cmds, /alice|DOMAINE/i);
 
@@ -162,6 +163,11 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(loginBody.measuredFrom, 'windows-interactive-logon');
     assert.equal(loginBody.rows[0].count, 1);
     assert.equal(loginBody.rows[0].lastMs, 20 * 60 * 1000);
+    assert.equal(loginBody.rows[0].historyCount, 1);
+    assert.equal(loginBody.rows[0].history[0].status, 'ready');
+    assert.equal(loginBody.rows[0].history[0].source, 'windows-event-4624');
+    assert.equal(loginBody.rows[0].history[0].durationMs, 20 * 60 * 1000);
+    assert.equal(loginBody.rows[0].history[0].startReliable, true);
 
     // Une déconnexion agent clôt une session encore ouverte.
     now = new Date(2026, 7, 31, 13, 0, 0, 0).getTime();
@@ -174,6 +180,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     const pendingBody = JSON.parse((await pendingResponse.done).body);
     assert.equal(pendingBody.rows[0].pendingMs, 20 * 60 * 1000);
     assert.equal(pendingBody.rows[0].pendingStage, 'waiting-logon-time');
+    assert.equal(pendingBody.rows[0].history[0].status, 'pending');
 
     // Certaines versions de MeshAgent confirment explorer.exe sans fournir
     // startTime. On clôt alors à l'instant de détection, après validation de
@@ -230,6 +237,9 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     const unavailableBody = JSON.parse((await unavailableResponse.done).body);
     assert.equal(unavailableBody.rows[0].count, 2);
     assert.equal(unavailableBody.rows[0].failed, 1);
+    assert.equal(unavailableBody.rows[0].history[0].status, 'start-unavailable');
+    assert.equal(unavailableBody.rows[0].history[0].failureReason, 'not-found');
+    assert.equal(unavailableBody.rows[0].history[0].startReliable, false);
 
     now = new Date(2026, 7, 31, 13, 32, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
