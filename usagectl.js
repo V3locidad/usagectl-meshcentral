@@ -28,7 +28,10 @@ const LOGIN_RETENTION_DAYS = 400;
 const LOGIN_SAVE_DELAY_MS = 1000;
 const LOGIN_POLL_MS = 5000;
 const LOGIN_LOGON_LOOKBACK_MS = 4 * 60 * 60 * 1000;
-const LOGIN_LOOKUP_TIMEOUT_MS = 15000;
+// L'interrogation du journal Security est normalement quasi immédiate. On
+// laisse néanmoins davantage de marge aux postes lents avant de déclarer la
+// mesure incomplète (deux essais, soit au maximum une minute).
+const LOGIN_LOOKUP_TIMEOUT_MS = 30000;
 const LOGIN_LOOKUP_MAX_ATTEMPTS = 2;
 const LOGIN_HISTORY_MAX_PER_NODE = 200;
 const LOGIN_SESSION_ID = 'usagectl-login-monitor';
@@ -304,27 +307,14 @@ module.exports.usagectl = function (parent) {
             '}',
             '$lookback = ' + String(LOGIN_LOGON_LOOKBACK_MS),
             '$cutoff = (Get-Date).AddMilliseconds(-$lookback)',
-            '$cimError = $false',
-            'try {',
-            "  $types = @(2, 10, 11, 12)",
-            '  $sessions = @(Get-CimInstance -ClassName Win32_LogonSession -ErrorAction Stop | Where-Object {',
-            '    ($types -contains [int]$_.LogonType) -and ($null -ne $_.StartTime) -and ([datetime]$_.StartTime -ge $cutoff)',
-            '  } | Sort-Object StartTime -Descending)',
-            '  foreach ($session in $sessions) {',
-            "    $query = 'Associators of {Win32_LogonSession.LogonId=' + $session.LogonId + '} Where AssocClass=Win32_LoggedOnUser Role=Dependent'",
-            '    foreach ($account in @(Get-CimInstance -Query $query -ErrorAction Stop)) {',
-            '      $key = Get-UsagectlUserKey ([string]$account.Name)',
-            '      if ($wanted -contains $key) {',
-            "        Write-Output ('USAGECTL_LOGON_CIM=' + ([datetime]$session.StartTime).ToUniversalTime().ToString('o'))",
-            '        exit 0',
-            '      }',
-            '    }',
-            '  }',
-            '} catch { $cimError = $true }',
+            // L'événement 4624 est filtré côté Windows et permet d'identifier
+            // directement l'utilisateur. Il doit passer avant CIM : les
+            // associations Win32_LoggedOnUser peuvent prendre plusieurs
+            // dizaines de secondes sur certains postes.
             '$eventError = $false',
             'try {',
             "  $xpath = \"*[System[(EventID=4624) and TimeCreated[timediff(@SystemTime) <= $lookback]]] and *[EventData[(Data[@Name='LogonType']='2' or Data[@Name='LogonType']='10' or Data[@Name='LogonType']='11' or Data[@Name='LogonType']='12')]]\"",
-            "  foreach ($event in @(Get-WinEvent -LogName Security -FilterXPath $xpath -MaxEvents 64 -ErrorAction Stop)) {",
+            "  foreach ($event in @(Get-WinEvent -LogName Security -FilterXPath $xpath -MaxEvents 256 -ErrorAction Stop)) {",
             '    $xml = [xml]$event.ToXml()',
             '    $values = @{}',
             "    foreach ($item in @($xml.Event.EventData.Data)) { $values[[string]$item.Name] = [string]$item.'#text' }",
@@ -335,6 +325,20 @@ module.exports.usagectl = function (parent) {
             '    }',
             '  }',
             '} catch { $eventError = $true }',
+            // Secours sans association WMI par utilisateur : au moment où
+            // coreinfo annonce une nouvelle session, la session interactive
+            // Windows la plus récente est précisément celle recherchée. Cette
+            // requête est nettement plus rapide que N requêtes Associators.
+            '$cimError = $false',
+            'try {',
+            "  $session = Get-CimInstance -ClassName Win32_LogonSession -Filter 'LogonType = 2 OR LogonType = 10 OR LogonType = 11 OR LogonType = 12' -ErrorAction Stop | Where-Object {",
+            '    ($null -ne $_.StartTime) -and ([datetime]$_.StartTime -ge $cutoff)',
+            '  } | Sort-Object StartTime -Descending | Select-Object -First 1',
+            '  if ($null -ne $session) {',
+            "    Write-Output ('USAGECTL_LOGON_CIM=' + ([datetime]$session.StartTime).ToUniversalTime().ToString('o'))",
+            '    exit 0',
+            '  }',
+            '} catch { $cimError = $true }',
             "if ($cimError -and $eventError) { Write-Output 'USAGECTL_LOGON_ERROR' } else { Write-Output 'USAGECTL_LOGON_NOT_FOUND' }",
         ].join('\r\n');
     }

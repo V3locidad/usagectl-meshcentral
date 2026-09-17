@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.43
+
+- Correction des mesures marquées « lecture Windows expirée » alors que la connexion avait réussi : l'événement Windows 4624 est maintenant interrogé avant CIM.
+- Suppression des associations `Win32_LoggedOnUser` répétées, qui pouvaient bloquer plusieurs dizaines de secondes sur certains postes ; le secours CIM utilise directement la session interactive la plus récente.
+- Le délai de réponse laissé aux postes lents passe de 15 à 30 secondes par essai.
+- L'interface et le PDF parlent désormais de « mesure incomplète » et précisent qu'il ne s'agit pas d'un échec de connexion Windows lorsque le bureau a bien été détecté.
+
 ## 0.0.42
 
 - Ajout d'un historique dépliable par poste avec le début Windows, la fin ou l'apparition du bureau, la durée, le résultat, la source de mesure et la raison d'un échec.

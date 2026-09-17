@@ -106,9 +106,10 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(aliceLookup.type, 2);
     assert.equal(aliceLookup.runAsUser, 0);
     assert.equal(aliceLookup.reply, true);
-    assert.match(aliceLookup.cmds, /Win32_LoggedOnUser/);
-    assert.match(aliceLookup.cmds, /Associators of \{Win32_LogonSession\.LogonId=/);
     assert.match(aliceLookup.cmds, /EventID=4624/);
+    assert.match(aliceLookup.cmds, /Win32_LogonSession/);
+    assert.doesNotMatch(aliceLookup.cmds, /Win32_LoggedOnUser|Associators of/);
+    assert.ok(aliceLookup.cmds.indexOf('Get-WinEvent') < aliceLookup.cmds.indexOf('Get-CimInstance'));
     assert.doesNotMatch(aliceLookup.cmds, /alice|DOMAINE/i);
 
     // MeshAgent n'annonce l'utilisateur qu'à 09:00, mais Windows indique que
