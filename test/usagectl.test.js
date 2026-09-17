@@ -119,21 +119,59 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(sent[sent.length - 1].type, 'ps');
     assert.equal(sent.filter(m => m.action === 'runcommands').length, 0);
 
-    // Le chronomètre reste ouvert jusqu'au démarrage réel d'explorer.exe.
-    now = new Date(2026, 7, 31, 9, 10, 0, 0).getTime();
+    // Explorer peut démarrer pendant que Windows affiche encore « Bienvenue ».
+    // LogonUI empêche alors de clôturer prématurément la mesure.
+    const aliceSessionId = aliceLookup.sessionid;
+    now = new Date(2026, 7, 31, 9, 9, 50, 0).getTime();
     plugin.hook_processAgentData({
-        action: 'msg', type: 'userSessions', sessionid: sent[sent.length - 1].sessionid,
+        action: 'msg', type: 'userSessions', sessionid: aliceSessionId,
         data: [{ Domain: 'DOMAINE', Username: 'alice', SessionId: 4, State: 'Active' }],
     }, agent);
     plugin.hook_processAgentData({
-        action: 'msg', type: 'ps', sessionid: sent[sent.length - 1].sessionid,
-        value: JSON.stringify({ 1234: { cmd: 'C:\\Windows\\explorer.exe', user: 'DOMAINE\\alice' } }),
+        action: 'msg', type: 'ps', sessionid: aliceSessionId,
+        value: JSON.stringify({
+            1234: { cmd: 'C:\\Windows\\explorer.exe', user: 'DOMAINE\\alice' },
+            4321: { cmd: 'C:\\Windows\\System32\\LogonUI.exe', user: 'SYSTEM' },
+        }),
     }, agent);
     assert.equal(sent[sent.length - 1].type, 'psinfo');
     plugin.hook_processAgentData({
-        action: 'msg', type: 'psinfo', sessionid: sent[sent.length - 1].sessionid, pid: 1234,
+        action: 'msg', type: 'psinfo', sessionid: aliceSessionId, pid: 1234,
         // Sous Windows, ProcessName peut être « explorer » sans l'extension.
         value: { processName: 'explorer', userName: 'DOMAINE\\alice', sessionId: 4, startTime: new Date(now).toISOString() },
+    }, agent);
+    const blockedResponse = makeResponse();
+    plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, blockedResponse.res, {});
+    const blockedBody = JSON.parse((await blockedResponse.done).body);
+    assert.equal(blockedBody.rows[0].count, 0);
+    assert.equal(blockedBody.rows[0].pendingStage, 'waiting-windows-shell');
+
+    // Deux contrôles consécutifs sans LogonUI/userinit confirment réellement le
+    // bureau. La fin retenue est la seconde confirmation, pas le StartTime
+    // précoce d'explorer.exe.
+    now = new Date(2026, 7, 31, 9, 9, 55, 0).getTime();
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'ps', sessionid: aliceSessionId,
+        value: JSON.stringify({ 1234: { cmd: 'C:\\Windows\\explorer.exe', user: 'DOMAINE\\alice' } }),
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'psinfo', sessionid: aliceSessionId, pid: 1234,
+        value: { processName: 'explorer', userName: 'DOMAINE\\alice', sessionId: 4, startTime: new Date(2026, 7, 31, 9, 9, 50, 0).toISOString() },
+    }, agent);
+    const confirmingResponse = makeResponse();
+    plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, confirmingResponse.res, {});
+    const confirmingBody = JSON.parse((await confirmingResponse.done).body);
+    assert.equal(confirmingBody.rows[0].count, 0);
+    assert.equal(confirmingBody.rows[0].pendingStage, 'confirming-desktop');
+
+    now = new Date(2026, 7, 31, 9, 10, 0, 0).getTime();
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'ps', sessionid: aliceSessionId,
+        value: JSON.stringify({ 1234: { cmd: 'C:\\Windows\\explorer.exe', user: 'DOMAINE\\alice' } }),
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'psinfo', sessionid: aliceSessionId, pid: 1234,
+        value: { processName: 'explorer', userName: 'DOMAINE\\alice', sessionId: 4, startTime: new Date(2026, 7, 31, 9, 9, 50, 0).toISOString() },
     }, agent);
 
     now = new Date(2026, 7, 31, 11, 0, 0, 0).getTime();
@@ -201,6 +239,14 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
         action: 'msg', type: 'psinfo', sessionid: bobSessionId, pid: 2345,
         value: { processName: 'explorer', userName: 'bob', sessionId: 5 },
     }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'ps', sessionid: bobSessionId,
+        value: JSON.stringify({ 2345: { cmd: '"C:\\Windows\\explorer.exe"', user: 'bob' } }),
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'psinfo', sessionid: bobSessionId, pid: 2345,
+        value: { processName: 'explorer', userName: 'bob', sessionId: 5 },
+    }, agent);
     const fallbackResponse = makeResponse();
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, fallbackResponse.res, {});
     const fallbackBody = JSON.parse((await fallbackResponse.done).body);
@@ -233,6 +279,14 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.hook_processAgentData({
         action: 'msg', type: 'userSessions', sessionid: charlieLookup.sessionid,
         data: [{ Username: 'charlie', SessionId: 6, State: 'Active' }],
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'ps', sessionid: charlieLookup.sessionid,
+        value: JSON.stringify({ 3456: { cmd: 'C:\\Windows\\explorer.exe', user: 'charlie' } }),
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'psinfo', sessionid: charlieLookup.sessionid, pid: 3456,
+        value: { processName: 'explorer', userName: 'charlie', sessionId: 6, startTime: new Date(now).toISOString() },
     }, agent);
     plugin.hook_processAgentData({
         action: 'msg', type: 'ps', sessionid: charlieLookup.sessionid,

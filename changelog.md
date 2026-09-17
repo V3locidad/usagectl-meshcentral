@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45
+
+- Le démarrage précoce d'`explorer.exe` ne clôt plus immédiatement la mesure pendant que Windows affiche encore « Connexion » ou « Bienvenue ».
+- Le bureau n'est considéré disponible qu'après la disparition de `LogonUI.exe` et `userinit.exe`, puis deux contrôles successifs sans écran de connexion.
+- La fin enregistrée correspond maintenant à la disponibilité confirmée du bureau, et non à l'heure de création souvent prématurée du processus Explorer.
+- L'état en cours distingue l'initialisation Windows de la confirmation finale du bureau.
+
 ## 0.0.44
 
 - L'heure de connexion est maintenant lue directement dans la session Windows par MeshAgent via WTS, sans lancer PowerShell ni parcourir le journal Security.

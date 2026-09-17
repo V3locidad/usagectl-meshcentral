@@ -555,7 +555,7 @@
     var r = lastLoginResult; if (!r) return;
     var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
     var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
-             + '<div class="metric-note">Le chrono démarre à la création de la session interactive Windows, juste après la validation des identifiants, et s’arrête au démarrage d’<b>explorer.exe</b> pour le même utilisateur. Il n’y a aucun timeout : une connexion de 10, 20 minutes ou davantage est entièrement mesurée.</div>';
+             + '<div class="metric-note">Le chrono démarre à la création de la session interactive Windows, juste après la validation des identifiants, et s’arrête lorsque le bureau est confirmé disponible : <b>explorer.exe</b> actif, écran de connexion fermé et état stable sur deux contrôles. Il n’y a aucun timeout : une connexion de 10, 20 minutes ou davantage est entièrement mesurée.</div>';
     if (!rows.length) {
       html += '<div class="empty">Aucun poste Windows.</div>';
     } else {
@@ -574,6 +574,8 @@
         if (n.pendingStage === 'waiting-logon-time') pendingDetail = 'lecture de l’heure de connexion Windows';
         else if (n.pendingStage === 'waiting-agent') pendingDetail = 'attente de la réponse de MeshAgent';
         else if (n.pendingStage === 'waiting-explorer') pendingDetail = 'réponse reçue, explorer.exe pas encore détecté';
+        else if (n.pendingStage === 'waiting-windows-shell') pendingDetail = 'explorer.exe démarré, Windows termine encore la connexion';
+        else if (n.pendingStage === 'confirming-desktop') pendingDetail = 'bureau détecté, confirmation de sa disponibilité';
         else if (n.pendingStage === 'explorer-seen') pendingDetail = 'explorer.exe détecté, validation en cours';
         var state = n.pendingStartedAt
           ? '<span class="login-pending">⏳ En cours depuis ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>'
@@ -598,7 +600,7 @@
       });
       html += '</tbody></table>';
     }
-    html += '<div style="margin-top:8px;font-size:11px;color:#777">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant le démarrage d’explorer.exe. Aucun nom d’utilisateur n’est conservé.</div>';
+    html += '<div style="margin-top:8px;font-size:11px;color:#777">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Aucun nom d’utilisateur n’est conservé.</div>';
     $('content').innerHTML = html;
     Array.prototype.forEach.call(document.querySelectorAll('.login-history-btn'), function (button) {
       button.onclick = function () {
@@ -939,7 +941,7 @@
     var rows = (loginTimes && loginTimes.rows) || [];
     var html = '<div class="page-break"></div>'
              + '<h2>Temps d’ouverture de session Windows</h2>'
-             + '<div class="muted" style="margin-bottom:10px">Délai entre la création de la session interactive Windows, juste après la validation des identifiants, et le démarrage d’explorer.exe pour le même utilisateur. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
+             + '<div class="muted" style="margin-bottom:10px">Délai entre la création de la session interactive Windows, juste après la validation des identifiants, et la disponibilité confirmée du bureau : explorer.exe actif, écran de connexion fermé et état stable sur deux contrôles. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
     if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
     html += '<table><thead><tr>'
           + '<th>Poste</th><th>Salle</th><th style="width:92px">État</th>'
@@ -965,7 +967,7 @@
             + '<td>' + n.count + '</td><td>' + n.failed + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant le démarrage d’explorer.exe. Aucun nom d’utilisateur n’est conservé.</div>';
+    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Aucun nom d’utilisateur n’est conservé.</div>';
     var allHistory = [];
     rows.forEach(function (n) {
       (n.history || []).forEach(function (e) {

@@ -207,7 +207,7 @@ module.exports.usagectl = function (parent) {
     // ============ Durée d'ouverture de session Windows ============
     // Le début est l'heure de création de la session interactive Windows,
     // retrouvée via Win32_LogonSession ou l'événement de sécurité 4624. La fin
-    // est l'heure de démarrage d'explorer.exe pour le même utilisateur. Il n'y
+    // est l'heure à laquelle le bureau est confirmé disponible. Il n'y
     // a volontairement aucun timeout sur la connexion elle-même : une ouverture
     // de 20 minutes doit rester mesurable.
     let loginData = { version: LOGIN_VERSION, nodes: {} };
@@ -467,6 +467,14 @@ module.exports.usagectl = function (parent) {
         // sans extension, tandis que cmd/path contiennent explorer.exe.
         return /(^|[\\/])explorer(?:\.exe)?(?=$|[\s"',])/.test(text);
     }
+    function isLoginBlockerValue(value) {
+        const text = String(value || '').trim().toLowerCase();
+        if (!text) return false;
+        // Explorer peut démarrer alors que Windows affiche encore
+        // « Bienvenue ». LogonUI porte cet écran et userinit exécute encore
+        // l'initialisation de la session avant de rendre le bureau utilisable.
+        return /(^|[\\/])(?:logonui|userinit)(?:\.exe)?(?=$|[\s"',])/.test(text);
+    }
     function explorerProcess(command) {
         const v = (command && command.value && typeof command.value === 'object') ? command.value : {};
         return [v.processName, v.ProcessName, v.name, v.Name, v.cmd, v.Cmd, v.path, v.Path,
@@ -572,18 +580,30 @@ module.exports.usagectl = function (parent) {
             if (!processes || typeof processes !== 'object') return true;
             const wanted = runtimeUsers[nodeId] || [];
             const candidates = [];
+            let blockerCount = 0;
             Object.keys(processes).forEach(pid => {
                 const p = processes[pid];
                 if (!p || typeof p !== 'object') return;
                 const cmd = p.cmd || p.name || p.path;
+                if (isLoginBlockerValue(cmd)) blockerCount++;
                 if (!isExplorerValue(cmd)) return;
                 const owner = loginUserKey(p.user);
                 candidates.push({ pid, owner });
             });
             const matching = candidates.filter(p => !p.owner || !wanted.length || wanted.indexOf(p.owner) >= 0);
             const remembered = runtimeExplorerCandidates[nodeId] = Object.create(null);
+            const hasExplorer = (matching.length ? matching : candidates).length > 0;
+            if (!hasExplorer || blockerCount > 0) {
+                state.desktopReadyConfirmations = 0;
+                delete state.desktopReadySince;
+            } else {
+                state.desktopReadyConfirmations = Number(state.desktopReadyConfirmations || 0) + 1;
+                if (!state.desktopReadySince) state.desktopReadySince = replyAt;
+            }
+            state.loginBlockerPresent = blockerCount > 0;
+            const desktopReady = hasExplorer && blockerCount === 0 && state.desktopReadyConfirmations >= 2;
             (matching.length ? matching : candidates).forEach(p => {
-                remembered[String(p.pid)] = { owner: p.owner, seenAt: replyAt };
+                remembered[String(p.pid)] = { owner: p.owner, seenAt: replyAt, desktopReady, readyAt: replyAt };
                 sendAgent(agent, { action: 'msg', type: 'psinfo', pid: p.pid, sessionid: command.sessionid });
             });
             if (Object.keys(remembered).length) state.explorerSeenAt = replyAt;
@@ -595,6 +615,9 @@ module.exports.usagectl = function (parent) {
             const candidates = runtimeExplorerCandidates[nodeId] || {};
             const candidate = candidates[String(command.pid)];
             if (!candidate && !explorerProcess(command)) return true;
+            // Explorer seul ne suffit pas : Windows peut l'avoir lancé en
+            // arrière-plan alors que l'écran de connexion est encore visible.
+            if (!candidate || !candidate.desktopReady) return true;
             const replyAt = Date.now();
             const state = loginRuntimeState(nodeId);
             state.lastAgentReplyAt = replyAt;
@@ -613,7 +636,7 @@ module.exports.usagectl = function (parent) {
             // Une petite tolérance couvre le délai entre la création très rapide
             // de la session et l'arrivée du coreinfo sur le serveur.
             if (Number.isFinite(processStart) && processStart >= attemptStart - 30000 && processStart <= Date.now() + 5000) {
-                finishLoginAttempt(nodeId, Math.max(attemptStart, processStart), readyStatus);
+                finishLoginAttempt(nodeId, Math.max(attemptStart, Number(candidate.readyAt) || replyAt), readyStatus);
             } else {
                 // Certains MeshAgent Windows confirment explorer mais ne donnent
                 // pas startTime. Une identité ou une session concordante suffit
@@ -621,8 +644,8 @@ module.exports.usagectl = function (parent) {
                 const ownerMatches = !!(owner && wanted.length && wanted.indexOf(owner) >= 0);
                 const sessionMatches = Number.isFinite(processSessionId) && wantedSessions.indexOf(processSessionId) >= 0;
                 if (ownerMatches || sessionMatches) {
-                    const detectedAt = candidate && Number(candidate.seenAt);
-                    finishLoginAttempt(nodeId, Number.isFinite(detectedAt) ? detectedAt : replyAt, readyStatus);
+                    const readyAt = Number(candidate.readyAt);
+                    finishLoginAttempt(nodeId, Number.isFinite(readyAt) ? readyAt : replyAt, readyStatus);
                 }
             }
             return true;
@@ -1368,6 +1391,8 @@ module.exports.usagectl = function (parent) {
                     let pendingStage = null;
                     if (pending) {
                         if (!pending.logonSource) pendingStage = 'waiting-logon-time';
+                        else if (pendingState.loginBlockerPresent) pendingStage = 'waiting-windows-shell';
+                        else if (Number(pendingState.desktopReadyConfirmations || 0) === 1) pendingStage = 'confirming-desktop';
                         else if (pendingState.explorerSeenAt) pendingStage = 'explorer-seen';
                         else if (pendingState.lastProcessReplyAt) pendingStage = 'waiting-explorer';
                         else if (pendingState.lastPollAt) pendingStage = 'waiting-agent';
