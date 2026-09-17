@@ -28,7 +28,7 @@ Le fichier `usagectl-presence.json` ne contient aucun nom de compte : uniquement
 
 ## Temps d'ouverture de session Windows
 
-L'onglet **Temps de connexion** mesure, pour chaque poste Windows, le délai entre la création de la session interactive Windows et le démarrage d'`explorer.exe` pour ce même utilisateur. L'heure de départ provient en priorité de l'événement de sécurité 4624, avec `Win32_LogonSession` en secours. Elle correspond au moment où Windows a validé les identifiants et créé la session ; l'instant physique exact où la touche Entrée est pressée n'est pas exposé par MeshAgent.
+L'onglet **Temps de connexion** mesure, pour chaque poste Windows, le délai entre la création de la session interactive Windows et le démarrage d'`explorer.exe` pour ce même utilisateur. L'heure de départ est lue directement dans la session Windows par MeshAgent via WTS, sans lancer de commande externe. L'événement de sécurité 4624 et `Win32_LogonSession` restent disponibles en secours pour les anciens agents. Cette heure correspond au moment où Windows a validé les identifiants et créé la session ; l'instant physique exact où la touche Entrée est pressée n'est pas exposé par MeshAgent.
 
 Il n'existe aucune limite de durée : une connexion de 10, 20 minutes ou davantage reste affichée comme « en cours ». Si la session se ferme ou si le poste se déconnecte avant le démarrage d'`explorer.exe`, la tentative est conservée comme mesure incomplète avec sa durée. Les mesures en cours sont enregistrées sur disque afin de survivre à un rechargement du plugin.
 

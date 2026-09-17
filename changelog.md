@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.44
+
+- L'heure de connexion est maintenant lue directement dans la session Windows par MeshAgent via WTS, sans lancer PowerShell ni parcourir le journal Security.
+- Cette lecture native reste disponible même lorsqu'une autre commande distante occupe déjà le canal `runcommands` du poste.
+- L'événement 4624 et `Win32_LogonSession` restent utilisés automatiquement en secours sur les anciens agents ne fournissant pas les informations WTS.
+
 ## 0.0.43
 
 - Correction des mesures marquées « lecture Windows expirée » alors que la connexion avait réussi : l'événement Windows 4624 est maintenant interrogé avant CIM.

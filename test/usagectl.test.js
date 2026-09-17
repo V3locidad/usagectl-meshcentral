@@ -102,25 +102,22 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     now = new Date(2026, 7, 31, 9, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['DOMAINE\\alice'] }, agent);
     const aliceLookup = sent[sent.length - 1];
-    assert.equal(aliceLookup.action, 'runcommands');
-    assert.equal(aliceLookup.type, 2);
-    assert.equal(aliceLookup.runAsUser, 0);
-    assert.equal(aliceLookup.reply, true);
-    assert.match(aliceLookup.cmds, /EventID=4624/);
-    assert.match(aliceLookup.cmds, /Win32_LogonSession/);
-    assert.doesNotMatch(aliceLookup.cmds, /Win32_LoggedOnUser|Associators of/);
-    assert.ok(aliceLookup.cmds.indexOf('Get-WinEvent') < aliceLookup.cmds.indexOf('Get-CimInstance'));
-    assert.doesNotMatch(aliceLookup.cmds, /alice|DOMAINE/i);
+    assert.equal(aliceLookup.action, 'msg');
+    assert.equal(aliceLookup.type, 'console');
+    assert.equal(aliceLookup.rights, 24);
+    assert.match(aliceLookup.value, /WTSSessionInfo/);
+    assert.match(aliceLookup.value, /getRawSessionAttribute/);
+    assert.doesNotMatch(aliceLookup.value, /alice|DOMAINE/i);
 
     // MeshAgent n'annonce l'utilisateur qu'à 09:00, mais Windows indique que
     // la session interactive a réellement commencé à 08:50.
     plugin.hook_processAgentData({
-        action: 'msg', type: 'runcommands', sessionid: aliceLookup.sessionid,
-        responseid: aliceLookup.responseid,
-        result: 'USAGECTL_LOGON_EVENT=' + new Date(2026, 7, 31, 8, 50, 0, 0).toISOString(),
+        action: 'msg', type: 'console', sessionid: aliceLookup.sessionid,
+        value: JSON.stringify([{ Domain: 'DOMAINE', Username: 'alice', SessionId: 4,
+            LogonTime: new Date(2026, 7, 31, 8, 50, 0, 0).getTime() }]),
     }, agent);
-    assert.ok(sent.some(m => m.type === 'userSessions'));
     assert.equal(sent[sent.length - 1].type, 'ps');
+    assert.equal(sent.filter(m => m.action === 'runcommands').length, 0);
 
     // Le chronomètre reste ouvert jusqu'au démarrage réel d'explorer.exe.
     now = new Date(2026, 7, 31, 9, 10, 0, 0).getTime();
@@ -166,7 +163,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(loginBody.rows[0].lastMs, 20 * 60 * 1000);
     assert.equal(loginBody.rows[0].historyCount, 1);
     assert.equal(loginBody.rows[0].history[0].status, 'ready');
-    assert.equal(loginBody.rows[0].history[0].source, 'windows-event-4624');
+    assert.equal(loginBody.rows[0].history[0].source, 'windows-wts-session');
     assert.equal(loginBody.rows[0].history[0].durationMs, 20 * 60 * 1000);
     assert.equal(loginBody.rows[0].history[0].startReliable, true);
 
@@ -174,7 +171,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     now = new Date(2026, 7, 31, 13, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['bob'] }, agent);
     const bobLookup = sent[sent.length - 1];
-    assert.equal(bobLookup.action, 'runcommands');
+    assert.equal(bobLookup.type, 'console');
     now = new Date(2026, 7, 31, 13, 20, 0, 0).getTime();
     const pendingResponse = makeResponse();
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, pendingResponse.res, {});
@@ -187,9 +184,9 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     // startTime. On clôt alors à l'instant de détection, après validation de
     // l'utilisateur ou de la session, au lieu de laisser le chrono bloqué.
     plugin.hook_processAgentData({
-        action: 'msg', type: 'runcommands', sessionid: bobLookup.sessionid,
-        responseid: bobLookup.responseid,
-        result: 'USAGECTL_LOGON_CIM=' + new Date(2026, 7, 31, 13, 0, 0, 0).toISOString(),
+        action: 'msg', type: 'console', sessionid: bobLookup.sessionid,
+        value: JSON.stringify([{ Username: 'bob', SessionId: 5,
+            LogonTime: new Date(2026, 7, 31, 13, 0, 0, 0).getTime() }]),
     }, agent);
     const bobSessionId = bobLookup.sessionid;
     plugin.hook_processAgentData({
@@ -215,9 +212,22 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     now = new Date(2026, 7, 31, 13, 30, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['charlie'] }, agent);
     const charlieLookup = sent[sent.length - 1];
+    assert.equal(charlieLookup.type, 'console');
     now = new Date(2026, 7, 31, 13, 31, 0, 0).getTime();
+    // Si WTS n'est pas disponible, le plugin retombe sur la commande Windows.
     plugin.hook_processAgentData({
-        action: 'msg', type: 'runcommands', sessionid: charlieLookup.sessionid,
+        action: 'msg', type: 'console', sessionid: charlieLookup.sessionid,
+        value: '[]',
+    }, agent);
+    const charliePowerShell = sent[sent.length - 1];
+    assert.equal(charliePowerShell.action, 'runcommands');
+    assert.match(charliePowerShell.cmds, /EventID=4624/);
+    assert.match(charliePowerShell.cmds, /Win32_LogonSession/);
+    assert.doesNotMatch(charliePowerShell.cmds, /Win32_LoggedOnUser|Associators of/);
+    assert.ok(charliePowerShell.cmds.indexOf('Get-WinEvent') < charliePowerShell.cmds.indexOf('Get-CimInstance'));
+    assert.doesNotMatch(charliePowerShell.cmds, /charlie/i);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'runcommands', sessionid: charliePowerShell.sessionid,
         result: 'USAGECTL_LOGON_NOT_FOUND',
     }, agent);
     plugin.hook_processAgentData({
@@ -261,5 +271,5 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.doesNotMatch(writes[loginPath], /alice|bob|charlie|dave|DOMAINE/i);
     const storedLogins = JSON.parse(writes[loginPath]);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'start-unavailable', 'agent-offline']);
-    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-event-4624', 'windows-logon-session', 'meshagent-session', 'meshagent-session']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-wts-session', 'windows-wts-session', 'meshagent-session', 'meshagent-session']);
 });

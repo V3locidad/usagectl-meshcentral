@@ -140,6 +140,7 @@
          + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
   function loginSourceLabel(source) {
+    if (source === 'windows-wts-session') return 'Session Windows (MeshAgent)';
     if (source === 'windows-logon-session') return 'Session Windows';
     if (source === 'windows-event-4624') return 'Événement 4624';
     if (source === 'meshagent-session') return 'Heure Windows indisponible';

@@ -28,6 +28,7 @@ const LOGIN_RETENTION_DAYS = 400;
 const LOGIN_SAVE_DELAY_MS = 1000;
 const LOGIN_POLL_MS = 5000;
 const LOGIN_LOGON_LOOKBACK_MS = 4 * 60 * 60 * 1000;
+const LOGIN_NATIVE_LOOKUP_TIMEOUT_MS = 5000;
 // L'interrogation du journal Security est normalement quasi immédiate. On
 // laisse néanmoins davantage de marge aux postes lents avant de déclarer la
 // mesure incomplète (deux essais, soit au maximum une minute).
@@ -342,6 +343,27 @@ module.exports.usagectl = function (parent) {
             "if ($cimError -and $eventError) { Write-Output 'USAGECTL_LOGON_ERROR' } else { Write-Output 'USAGECTL_LOGON_NOT_FOUND' }",
         ].join('\r\n');
     }
+    function buildNativeLogonLookupCommand() {
+        // WTSINFOW se termine par cinq LARGE_INTEGER : ConnectTime,
+        // DisconnectTime, LastInputTime, LogonTime et CurrentTime. Lire le
+        // quatrième depuis la fin évite de dépendre de l'alignement 32/64 bits.
+        // Cette interrogation s'exécute directement dans MeshAgent : aucun
+        // PowerShell ni processus externe ne peut la bloquer.
+        const code = "(function(){var u=require('user-sessions'),s=require('kvm-helper').users(),o=[];for(var k in s){var x=s[k];if(!x||x.SessionId==null||!x.Username)continue;try{var b=u.getRawSessionAttribute(x.SessionId,u.InfoClass.WTSSessionInfo);if(b&&b.length>=40){var p=b.length-16,lo=b.readUInt32LE(p),hi=b.readUInt32LE(p+4),ms=Math.floor((hi*4294967296+lo)/10000-11644473600000);o.push({SessionId:x.SessionId,Username:x.Username,Domain:x.Domain||'',LogonTime:ms});}}catch(e){}}return o;})()";
+        return 'eval "' + code + '"';
+    }
+    function requestNativeLogonStart(nodeId, agent) {
+        const rec = loginData.nodes[nodeId];
+        if (!rec || !rec.pending) return false;
+        const state = loginRuntimeState(nodeId);
+        const sent = sendAgent(agent, {
+            action: 'msg', type: 'console', rights: 24,
+            sessionid: loginSessionId(rec.pending),
+            value: buildNativeLogonLookupCommand(),
+        });
+        if (sent) state.nativeLogonLookupAt = Date.now();
+        return sent;
+    }
     function requestLogonStart(nodeId, agent) {
         const rec = loginData.nodes[nodeId];
         if (!rec || !rec.pending) return false;
@@ -377,6 +399,12 @@ module.exports.usagectl = function (parent) {
         const now = Date.now();
         const state = loginRuntimeState(nodeId);
         if (!pending.logonSource) {
+            const nativeAt = Number(state.nativeLogonLookupAt || 0);
+            if (!nativeAt) {
+                requestNativeLogonStart(nodeId, agent);
+                return;
+            }
+            if (!state.nativeLogonLookupCompletedAt && now - nativeAt < LOGIN_NATIVE_LOOKUP_TIMEOUT_MS) return;
             const attempts = Number(state.logonLookupAttempts || 0);
             const lookupAt = Number(state.logonLookupAt || 0);
             if (!lookupAt || (now - lookupAt >= LOGIN_LOOKUP_TIMEOUT_MS && attempts < LOGIN_LOOKUP_MAX_ATTEMPTS)) {
@@ -458,6 +486,41 @@ module.exports.usagectl = function (parent) {
         const nodeId = agent && agent.dbNodeKey;
         const rec = nodeId && loginData.nodes[nodeId];
         if (!rec || !rec.pending || command.sessionid !== loginSessionId(rec.pending)) return true;
+
+        if (command.type === 'console') {
+            const state = loginRuntimeState(nodeId);
+            state.nativeLogonLookupCompletedAt = Date.now();
+            let sessions = null;
+            try { sessions = JSON.parse(String(command.value || '')); } catch (_) {}
+            const wanted = runtimeUsers[nodeId] || [];
+            const detectedAt = Number(rec.pending.detectedAt || rec.pending.startAt);
+            let best = null;
+            (Array.isArray(sessions) ? sessions : []).forEach(s => {
+                if (!s) return;
+                const owner = loginUserKey((s.Domain ? s.Domain + '\\' : '') + (s.Username || ''));
+                const eventAt = Number(s.LogonTime);
+                if (wanted.length && owner && wanted.indexOf(owner) < 0) return;
+                if (!Number.isFinite(eventAt) || eventAt < detectedAt - LOGIN_LOGON_LOOKBACK_MS || eventAt > detectedAt + 5 * 60000) return;
+                if (!best || eventAt > best.eventAt) best = { eventAt, sessionId: Number(s.SessionId) };
+            });
+            if (best) {
+                rec.pending.startAt = best.eventAt;
+                rec.pending.logonSource = 'windows-wts-session';
+                if (Number.isFinite(best.sessionId)) {
+                    runtimeSessionIds[nodeId] = [best.sessionId];
+                    rec.pending.sessionIds = [best.sessionId];
+                }
+                state.logonLookupCompletedAt = Date.now();
+                delete state.logonLookupFailed;
+                saveLoginSoon();
+                pollLogin(nodeId, agent, true);
+            } else if (!state.logonLookupAt) {
+                // Ancien MeshAgent ou API WTS indisponible : conserver le
+                // chemin PowerShell comme secours, sans attendre 5 secondes.
+                requestLogonStart(nodeId, agent);
+            }
+            return true;
+        }
 
         if (command.type === 'runcommands') {
             const result = String(command.result || '');
