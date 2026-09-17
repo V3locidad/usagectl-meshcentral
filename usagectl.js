@@ -205,8 +205,9 @@ module.exports.usagectl = function (parent) {
     }
 
     // ============ Durée d'ouverture de session Windows ============
-    // Le début est l'heure de création de la session interactive Windows,
-    // retrouvée via Win32_LogonSession ou l'événement de sécurité 4624. La fin
+    // Le début privilégie la dernière saisie Windows précédant la création de
+    // la session (généralement la validation par Entrée), puis retombe sur
+    // l'heure de création WTS, Win32_LogonSession ou l'événement 4624. La fin
     // est l'heure à laquelle le bureau est confirmé disponible. Il n'y
     // a volontairement aucun timeout sur la connexion elle-même : une ouverture
     // de 20 minutes doit rester mesurable.
@@ -345,11 +346,11 @@ module.exports.usagectl = function (parent) {
     }
     function buildNativeLogonLookupCommand() {
         // WTSINFOW se termine par cinq LARGE_INTEGER : ConnectTime,
-        // DisconnectTime, LastInputTime, LogonTime et CurrentTime. Lire le
-        // quatrième depuis la fin évite de dépendre de l'alignement 32/64 bits.
+        // DisconnectTime, LastInputTime, LogonTime et CurrentTime. Les lire
+        // relativement à la fin évite de dépendre de l'alignement 32/64 bits.
         // Cette interrogation s'exécute directement dans MeshAgent : aucun
         // PowerShell ni processus externe ne peut la bloquer.
-        const code = "(function(){var u=require('user-sessions'),s=require('kvm-helper').users(),o=[];for(var k in s){var x=s[k];if(!x||x.SessionId==null||!x.Username)continue;try{var b=u.getRawSessionAttribute(x.SessionId,u.InfoClass.WTSSessionInfo);if(b&&b.length>=40){var p=b.length-16,lo=b.readUInt32LE(p),hi=b.readUInt32LE(p+4),ms=Math.floor((hi*4294967296+lo)/10000-11644473600000);o.push({SessionId:x.SessionId,Username:x.Username,Domain:x.Domain||'',LogonTime:ms});}}catch(e){}}return o;})()";
+        const code = "(function(){var u=require('user-sessions'),s=require('kvm-helper').users(),o=[];for(var k in s){var x=s[k];if(!x||x.SessionId==null||!x.Username)continue;try{var b=u.getRawSessionAttribute(x.SessionId,u.InfoClass.WTSSessionInfo);if(b&&b.length>=40){var p=b.length-16,lo=b.readUInt32LE(p),hi=b.readUInt32LE(p+4),ms=Math.floor((hi*4294967296+lo)/10000-11644473600000),ip=b.length-24,ilo=b.readUInt32LE(ip),ihi=b.readUInt32LE(ip+4),ims=Math.floor((ihi*4294967296+ilo)/10000-11644473600000);o.push({SessionId:x.SessionId,Username:x.Username,Domain:x.Domain||'',LogonTime:ms,LastInputTime:ims});}}catch(e){}}return o;})()";
         return 'eval "' + code + '"';
     }
     function requestNativeLogonStart(nodeId, agent) {
@@ -507,13 +508,23 @@ module.exports.usagectl = function (parent) {
                 if (!s) return;
                 const owner = loginUserKey((s.Domain ? s.Domain + '\\' : '') + (s.Username || ''));
                 const eventAt = Number(s.LogonTime);
+                const inputAt = Number(s.LastInputTime);
                 if (wanted.length && owner && wanted.indexOf(owner) < 0) return;
                 if (!Number.isFinite(eventAt) || eventAt < detectedAt - LOGIN_LOGON_LOOKBACK_MS || eventAt > detectedAt + 5 * 60000) return;
-                if (!best || eventAt > best.eventAt) best = { eventAt, sessionId: Number(s.SessionId) };
+                const inputReliable = Number.isFinite(inputAt) && inputAt > 0 &&
+                    inputAt >= detectedAt - LOGIN_LOGON_LOOKBACK_MS && inputAt <= eventAt + 1000;
+                if (!best || eventAt > best.eventAt) {
+                    best = {
+                        eventAt,
+                        startAt: inputReliable ? inputAt : eventAt,
+                        source: inputReliable ? 'windows-wts-input' : 'windows-wts-session',
+                        sessionId: Number(s.SessionId),
+                    };
+                }
             });
             if (best) {
-                rec.pending.startAt = best.eventAt;
-                rec.pending.logonSource = 'windows-wts-session';
+                rec.pending.startAt = best.startAt;
+                rec.pending.logonSource = best.source;
                 if (Number.isFinite(best.sessionId)) {
                     runtimeSessionIds[nodeId] = [best.sessionId];
                     rec.pending.sessionIds = [best.sessionId];
@@ -1423,7 +1434,7 @@ module.exports.usagectl = function (parent) {
                 });
                 sendJson(res, 200, {
                     rows, weekMode: range.weekMode, weekLabel: range.label, days: range.days,
-                    measuredFrom: 'windows-interactive-logon', measuredUntil: 'explorer.exe', timeout: null,
+                    measuredFrom: 'windows-last-input-or-interactive-logon', measuredUntil: 'confirmed-desktop', timeout: null,
                 });
             });
         });

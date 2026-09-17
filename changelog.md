@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.46
+
+- Le départ du chronomètre utilise maintenant la dernière saisie Windows précédant la création de session, ce qui correspond normalement à l'appui sur Entrée après le login et le mot de passe.
+- Cette heure récupère la phase de validation des identifiants qui manquait auparavant entre le chrono manuel et `WTS LogonTime`.
+- Si Windows ne fournit pas une saisie fiable antérieure au logon, le plugin conserve automatiquement l'heure de création de session comme secours.
+- La source affichée dans l'historique et le PDF distingue « Validation clavier Windows » de « Session Windows ».
+
 ## 0.0.45
 
 - Le démarrage précoce d'`explorer.exe` ne clôt plus immédiatement la mesure pendant que Windows affiche encore « Connexion » ou « Bienvenue ».

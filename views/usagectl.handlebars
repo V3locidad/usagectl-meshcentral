@@ -140,6 +140,7 @@
          + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
   function loginSourceLabel(source) {
+    if (source === 'windows-wts-input') return 'Validation clavier Windows (MeshAgent)';
     if (source === 'windows-wts-session') return 'Session Windows (MeshAgent)';
     if (source === 'windows-logon-session') return 'Session Windows';
     if (source === 'windows-event-4624') return 'Événement 4624';
@@ -555,7 +556,7 @@
     var r = lastLoginResult; if (!r) return;
     var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
     var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
-             + '<div class="metric-note">Le chrono démarre à la création de la session interactive Windows, juste après la validation des identifiants, et s’arrête lorsque le bureau est confirmé disponible : <b>explorer.exe</b> actif, écran de connexion fermé et état stable sur deux contrôles. Il n’y a aucun timeout : une connexion de 10, 20 minutes ou davantage est entièrement mesurée.</div>';
+             + '<div class="metric-note">Le chrono démarre à la dernière saisie Windows précédant la création de la session — généralement l’appui sur <b>Entrée</b> qui valide les identifiants — et s’arrête lorsque le bureau est confirmé disponible : explorer.exe actif, écran de connexion fermé et état stable sur deux contrôles. Si cette saisie n’est pas disponible, l’heure de création de session est utilisée. Il n’y a aucun timeout.</div>';
     if (!rows.length) {
       html += '<div class="empty">Aucun poste Windows.</div>';
     } else {
@@ -941,7 +942,7 @@
     var rows = (loginTimes && loginTimes.rows) || [];
     var html = '<div class="page-break"></div>'
              + '<h2>Temps d’ouverture de session Windows</h2>'
-             + '<div class="muted" style="margin-bottom:10px">Délai entre la création de la session interactive Windows, juste après la validation des identifiants, et la disponibilité confirmée du bureau : explorer.exe actif, écran de connexion fermé et état stable sur deux contrôles. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
+             + '<div class="muted" style="margin-bottom:10px">Délai entre la dernière saisie Windows précédant la création de session — généralement la validation par Entrée — et la disponibilité confirmée du bureau. Si cette saisie n’est pas disponible, l’heure de création de session est utilisée. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
     if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
     html += '<table><thead><tr>'
           + '<th>Poste</th><th>Salle</th><th style="width:92px">État</th>'

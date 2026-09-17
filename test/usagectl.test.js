@@ -107,14 +107,17 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(aliceLookup.rights, 24);
     assert.match(aliceLookup.value, /WTSSessionInfo/);
     assert.match(aliceLookup.value, /getRawSessionAttribute/);
+    assert.match(aliceLookup.value, /LastInputTime/);
     assert.doesNotMatch(aliceLookup.value, /alice|DOMAINE/i);
 
-    // MeshAgent n'annonce l'utilisateur qu'à 09:00, mais Windows indique que
-    // la session interactive a réellement commencé à 08:50.
+    // MeshAgent n'annonce l'utilisateur qu'à 09:00. WTS indique une création
+    // de session à 08:50:11, mais la dernière saisie — l'appui sur Entrée — a
+    // eu lieu 11 secondes plus tôt et devient le vrai départ du chrono.
     plugin.hook_processAgentData({
         action: 'msg', type: 'console', sessionid: aliceLookup.sessionid,
         value: JSON.stringify([{ Domain: 'DOMAINE', Username: 'alice', SessionId: 4,
-            LogonTime: new Date(2026, 7, 31, 8, 50, 0, 0).getTime() }]),
+            LogonTime: new Date(2026, 7, 31, 8, 50, 11, 0).getTime(),
+            LastInputTime: new Date(2026, 7, 31, 8, 50, 0, 0).getTime() }]),
     }, agent);
     assert.equal(sent[sent.length - 1].type, 'ps');
     assert.equal(sent.filter(m => m.action === 'runcommands').length, 0);
@@ -196,12 +199,13 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, loginResponse.res, {});
     const loginBody = JSON.parse((await loginResponse.done).body);
     assert.equal(loginBody.timeout, null);
-    assert.equal(loginBody.measuredFrom, 'windows-interactive-logon');
+    assert.equal(loginBody.measuredFrom, 'windows-last-input-or-interactive-logon');
     assert.equal(loginBody.rows[0].count, 1);
     assert.equal(loginBody.rows[0].lastMs, 20 * 60 * 1000);
     assert.equal(loginBody.rows[0].historyCount, 1);
     assert.equal(loginBody.rows[0].history[0].status, 'ready');
-    assert.equal(loginBody.rows[0].history[0].source, 'windows-wts-session');
+    assert.equal(loginBody.rows[0].history[0].source, 'windows-wts-input');
+    assert.equal(loginBody.rows[0].history[0].startAt, new Date(2026, 7, 31, 8, 50, 0, 0).getTime());
     assert.equal(loginBody.rows[0].history[0].durationMs, 20 * 60 * 1000);
     assert.equal(loginBody.rows[0].history[0].startReliable, true);
 
@@ -325,5 +329,5 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.doesNotMatch(writes[loginPath], /alice|bob|charlie|dave|DOMAINE/i);
     const storedLogins = JSON.parse(writes[loginPath]);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'start-unavailable', 'agent-offline']);
-    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-wts-session', 'windows-wts-session', 'meshagent-session', 'meshagent-session']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-wts-input', 'windows-wts-session', 'meshagent-session', 'meshagent-session']);
 });
