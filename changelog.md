@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.39
+
+- Correction de la détection d'Explorer lorsque MeshAgent renvoie le nom de processus `explorer` sans l'extension `.exe`.
+- Une réponse `psinfo` sans heure de démarrage ne laisse plus le chronomètre bloqué si l'utilisateur ou la session Windows concorde ; l'instant de détection est alors utilisé (précision maximale de 5 secondes).
+- L'état en cours indique désormais si le plugin attend MeshAgent, attend Explorer ou a déjà détecté Explorer.
+
 ## 0.0.38
 
 - Ajout d'un onglet « Temps de connexion » avec dernière durée, moyenne, maximum et nombre de mesures par poste Windows.

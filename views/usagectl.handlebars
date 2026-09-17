@@ -537,8 +537,13 @@
             + '<th style="width:120px">Non abouties</th>'
             + '</tr></thead><tbody>';
       rows.forEach(function (n) {
+        var pendingDetail = '';
+        if (n.pendingStage === 'waiting-agent') pendingDetail = 'attente de la réponse de MeshAgent';
+        else if (n.pendingStage === 'waiting-explorer') pendingDetail = 'réponse reçue, explorer.exe pas encore détecté';
+        else if (n.pendingStage === 'explorer-seen') pendingDetail = 'explorer.exe détecté, validation en cours';
         var state = n.pendingStartedAt
           ? '<span class="login-pending">⏳ En cours depuis ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>'
+            + (pendingDetail ? '<div style="font-size:11px;color:#777;font-weight:normal;margin-top:2px">' + escapeHtml(pendingDetail) + '</div>' : '')
           : (n.count ? '<span class="login-ready">✓ Mesuré</span>' : '<span style="color:#999">En attente d’une connexion</span>');
         html += '<tr><td>' + escapeHtml(n.name) + '</td>'
               + '<td>' + escapeHtml(n.mesh) + '</td>'

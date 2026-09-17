@@ -117,7 +117,8 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(sent[sent.length - 1].type, 'psinfo');
     plugin.hook_processAgentData({
         action: 'msg', type: 'psinfo', sessionid: sent[sent.length - 1].sessionid, pid: 1234,
-        value: { processName: 'explorer.exe', userName: 'DOMAINE\\alice', sessionId: 4, startTime: new Date(now).toISOString() },
+        // Sous Windows, ProcessName peut être « explorer » sans l'extension.
+        value: { processName: 'explorer', userName: 'DOMAINE\\alice', sessionId: 4, startTime: new Date(now).toISOString() },
     }, agent);
 
     now = new Date(2026, 7, 31, 11, 0, 0, 0).getTime();
@@ -153,19 +154,46 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, pendingResponse.res, {});
     const pendingBody = JSON.parse((await pendingResponse.done).body);
     assert.equal(pendingBody.rows[0].pendingMs, 20 * 60 * 1000);
+
+    // Certaines versions de MeshAgent confirment explorer.exe sans fournir
+    // startTime. On clôt alors à l'instant de détection, après validation de
+    // l'utilisateur ou de la session, au lieu de laisser le chrono bloqué.
+    const bobSessionId = sent[sent.length - 1].sessionid;
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'userSessions', sessionid: bobSessionId,
+        data: [{ Username: 'bob', SessionId: 5, State: 'Active' }],
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'ps', sessionid: bobSessionId,
+        value: JSON.stringify({ 2345: { cmd: '"C:\\Windows\\explorer.exe"', user: 'bob' } }),
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'psinfo', sessionid: bobSessionId, pid: 2345,
+        value: { processName: 'explorer', userName: 'bob', sessionId: 5 },
+    }, agent);
+    const fallbackResponse = makeResponse();
+    plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, fallbackResponse.res, {});
+    const fallbackBody = JSON.parse((await fallbackResponse.done).body);
+    assert.equal(fallbackBody.rows[0].count, 2);
+    assert.equal(fallbackBody.rows[0].lastMs, 20 * 60 * 1000);
+
+    now = new Date(2026, 7, 31, 13, 21, 0, 0).getTime();
+    plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
+    now = new Date(2026, 7, 31, 13, 30, 0, 0).getTime();
+    plugin.hook_processAgentData({ action: 'coreinfo', users: ['charlie'] }, agent);
     now = new Date(2026, 7, 31, 14, 0, 0, 0).getTime();
     plugin.HandleEvent(null, { action: 'nodeconnect', nodeid: nodeId, meshid: meshId, conn: 0 });
     plugin.HandleEvent(null, { action: 'stopped' });
 
     const presencePath = Object.keys(writes).find(p => p.endsWith('usagectl-presence.json'));
     assert.ok(presencePath);
-    assert.doesNotMatch(writes[presencePath], /alice|bob|DOMAINE/i);
+    assert.doesNotMatch(writes[presencePath], /alice|bob|charlie|DOMAINE/i);
     const stored = JSON.parse(writes[presencePath]);
-    assert.deepEqual(stored.nodes[nodeId].events.map(e => e[1]), [0, 1, 0, 1, 0]);
+    assert.deepEqual(stored.nodes[nodeId].events.map(e => e[1]), [0, 1, 0, 1, 0, 1, 0]);
 
     const loginPath = Object.keys(writes).find(p => p.endsWith('usagectl-logins.json'));
     assert.ok(loginPath);
-    assert.doesNotMatch(writes[loginPath], /alice|bob|DOMAINE/i);
+    assert.doesNotMatch(writes[loginPath], /alice|bob|charlie|DOMAINE/i);
     const storedLogins = JSON.parse(writes[loginPath]);
-    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'agent-offline']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'agent-offline']);
 });

@@ -32,6 +32,8 @@ L'onglet **Temps de connexion** mesure, pour chaque poste Windows, le délai ent
 
 Il n'existe aucune limite de durée : une connexion de 10, 20 minutes ou davantage reste affichée comme « en cours ». Si la session se ferme ou si le poste se déconnecte avant le démarrage d'`explorer.exe`, la tentative est conservée comme non aboutie avec sa durée. Les mesures en cours sont enregistrées sur disque afin de survivre à un rechargement du plugin.
 
+Selon la version de MeshAgent, le détail du processus peut ne pas contenir son heure de démarrage. Lorsque le processus Explorer appartient bien au même utilisateur ou à la même session Windows, le plugin utilise alors son instant de détection, avec une précision maximale de 5 secondes. L'interface affiche aussi l'étape de détection en cours pour faciliter le diagnostic.
+
 ## Important après la mise à jour
 
 MeshCentral expose l'état courant des sessions, mais ne conserve pas leur historique. La mesure de présence commence donc au premier démarrage de cette version du plugin. Les semaines antérieures restent disponibles pour les données électriques, mais pas pour l'occupation humaine.

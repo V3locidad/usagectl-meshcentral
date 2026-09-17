@@ -206,6 +206,8 @@ module.exports.usagectl = function (parent) {
     let loginSaveTimer = null;
     const runtimeUsers = Object.create(null); // identifiants en mémoire uniquement
     const runtimeSessionIds = Object.create(null);
+    const runtimeExplorerCandidates = Object.create(null);
+    const runtimeLoginState = Object.create(null);
     const loginPollAt = Object.create(null);
     try {
         if (fs.existsSync(LOGIN_FILE)) {
@@ -287,6 +289,8 @@ module.exports.usagectl = function (parent) {
         }
         if (sendAgent(agent, { action: 'msg', type: 'ps', sessionid })) {
             loginPollAt[nodeId] = now;
+            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
+            runtimeLoginState[nodeId].lastPollAt = now;
         }
     }
     function pollPendingLogins() {
@@ -304,6 +308,8 @@ module.exports.usagectl = function (parent) {
         const now = Number.isFinite(atMs) ? atMs : Date.now();
         rec.pending = { startAt: now };
         runtimeUsers[nodeId] = loginUserKeys(users);
+        runtimeExplorerCandidates[nodeId] = Object.create(null);
+        runtimeLoginState[nodeId] = {};
         pruneLoginRecord(rec, now);
         saveLoginSoon();
         pollLogin(nodeId, agent, true);
@@ -317,13 +323,22 @@ module.exports.usagectl = function (parent) {
         delete rec.pending;
         delete loginPollAt[nodeId];
         delete runtimeSessionIds[nodeId];
+        delete runtimeExplorerCandidates[nodeId];
+        delete runtimeLoginState[nodeId];
         pruneLoginRecord(rec, endAt);
         saveLoginSoon();
     }
+    function isExplorerValue(value) {
+        const text = String(value || '').trim().toLowerCase();
+        if (!text) return false;
+        // System.Diagnostics.Process.ProcessName renvoie souvent « explorer »
+        // sans extension, tandis que cmd/path contiennent explorer.exe.
+        return /(^|[\\/])explorer(?:\.exe)?(?=$|[\s"',])/.test(text);
+    }
     function explorerProcess(command) {
         const v = (command && command.value && typeof command.value === 'object') ? command.value : {};
-        const name = String(v.processName || v.ProcessName || v.name || v.Name || v.cmd || v.Cmd || '').toLowerCase();
-        return /(^|[\\/])explorer\.exe(?:\s|$)/.test(name) || name === 'explorer.exe';
+        return [v.processName, v.ProcessName, v.name, v.Name, v.cmd, v.Cmd, v.path, v.Path,
+            v.executablePath, v.ExecutablePath].some(isExplorerValue);
     }
     function processInfoUser(command) {
         const v = (command && command.value && typeof command.value === 'object') ? command.value : {};
@@ -341,6 +356,8 @@ module.exports.usagectl = function (parent) {
         if (!rec || !rec.pending || command.sessionid !== loginSessionId(rec.pending.startAt)) return true;
 
         if (command.type === 'userSessions') {
+            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
+            runtimeLoginState[nodeId].lastAgentReplyAt = Date.now();
             const wanted = runtimeUsers[nodeId] || [];
             const ids = [];
             (Array.isArray(command.data) ? command.data : []).forEach(s => {
@@ -361,6 +378,10 @@ module.exports.usagectl = function (parent) {
         }
 
         if (command.type === 'ps') {
+            const replyAt = Date.now();
+            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
+            runtimeLoginState[nodeId].lastAgentReplyAt = replyAt;
+            runtimeLoginState[nodeId].lastProcessReplyAt = replyAt;
             let processes = null;
             try { processes = (typeof command.value === 'string') ? JSON.parse(command.value) : command.value; } catch (_) {}
             if (!processes || typeof processes !== 'object') return true;
@@ -369,21 +390,32 @@ module.exports.usagectl = function (parent) {
             Object.keys(processes).forEach(pid => {
                 const p = processes[pid];
                 if (!p || typeof p !== 'object') return;
-                const cmd = String(p.cmd || p.name || '').toLowerCase();
-                if (!(/(^|[\\/])explorer\.exe(?:\s|$)/.test(cmd) || cmd === 'explorer.exe')) return;
+                const cmd = p.cmd || p.name || p.path;
+                if (!isExplorerValue(cmd)) return;
                 const owner = loginUserKey(p.user);
                 candidates.push({ pid, owner });
             });
             const matching = candidates.filter(p => !p.owner || !wanted.length || wanted.indexOf(p.owner) >= 0);
+            const remembered = runtimeExplorerCandidates[nodeId] = Object.create(null);
             (matching.length ? matching : candidates).forEach(p => {
+                remembered[String(p.pid)] = { owner: p.owner, seenAt: replyAt };
                 sendAgent(agent, { action: 'msg', type: 'psinfo', pid: p.pid, sessionid: command.sessionid });
             });
+            if (Object.keys(remembered).length) runtimeLoginState[nodeId].explorerSeenAt = replyAt;
+            else delete runtimeLoginState[nodeId].explorerSeenAt;
             return true;
         }
 
-        if (command.type === 'psinfo' && explorerProcess(command)) {
+        if (command.type === 'psinfo') {
+            const candidates = runtimeExplorerCandidates[nodeId] || {};
+            const candidate = candidates[String(command.pid)];
+            if (!candidate && !explorerProcess(command)) return true;
+            const replyAt = Date.now();
+            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
+            runtimeLoginState[nodeId].lastAgentReplyAt = replyAt;
+            runtimeLoginState[nodeId].lastProcessInfoAt = replyAt;
             const wanted = runtimeUsers[nodeId] || [];
-            const owner = processInfoUser(command);
+            const owner = processInfoUser(command) || (candidate && candidate.owner) || '';
             if (owner && wanted.length && wanted.indexOf(owner) < 0) return true;
             const v = command.value || {};
             const processSessionId = Number(v.sessionId != null ? v.sessionId : v.SessionId);
@@ -396,6 +428,16 @@ module.exports.usagectl = function (parent) {
             // de la session et l'arrivée du coreinfo sur le serveur.
             if (Number.isFinite(processStart) && processStart >= attemptStart - 30000 && processStart <= Date.now() + 5000) {
                 finishLoginAttempt(nodeId, Math.max(attemptStart, processStart), 'ready');
+            } else {
+                // Certains MeshAgent Windows confirment explorer mais ne donnent
+                // pas startTime. Une identité ou une session concordante suffit
+                // alors ; l'instant de détection est précis à LOGIN_POLL_MS près.
+                const ownerMatches = !!(owner && wanted.length && wanted.indexOf(owner) >= 0);
+                const sessionMatches = Number.isFinite(processSessionId) && wantedSessions.indexOf(processSessionId) >= 0;
+                if (ownerMatches || sessionMatches) {
+                    const detectedAt = candidate && Number(candidate.seenAt);
+                    finishLoginAttempt(nodeId, Number.isFinite(detectedAt) ? detectedAt : replyAt, 'ready');
+                }
             }
             return true;
         }
@@ -1118,6 +1160,14 @@ module.exports.usagectl = function (parent) {
                     const latest = completed.slice().sort((a, b) => Number(b[1]) - Number(a[1]))[0];
                     const pending = rec && rec.pending && Number(rec.pending.startAt) >= range.start && Number(rec.pending.startAt) < range.end
                         ? rec.pending : null;
+                    const pendingState = runtimeLoginState[n._id] || {};
+                    let pendingStage = null;
+                    if (pending) {
+                        if (pendingState.explorerSeenAt) pendingStage = 'explorer-seen';
+                        else if (pendingState.lastProcessReplyAt) pendingStage = 'waiting-explorer';
+                        else if (pendingState.lastPollAt) pendingStage = 'waiting-agent';
+                        else pendingStage = 'starting';
+                    }
                     return {
                         id: n._id,
                         name: n.name || n._id,
@@ -1131,6 +1181,7 @@ module.exports.usagectl = function (parent) {
                         failed: failed.length,
                         pendingStartedAt: pending ? Number(pending.startAt) : null,
                         pendingMs: pending ? Math.max(0, now - Number(pending.startAt)) : null,
+                        pendingStage,
                     };
                 }).sort((a, b) => {
                     if (a.pendingStartedAt && !b.pendingStartedAt) return -1;
