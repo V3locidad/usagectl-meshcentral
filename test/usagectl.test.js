@@ -101,6 +101,22 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
     now = new Date(2026, 7, 31, 9, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['DOMAINE\\alice'] }, agent);
+    const aliceLookup = sent[sent.length - 1];
+    assert.equal(aliceLookup.action, 'runcommands');
+    assert.equal(aliceLookup.type, 2);
+    assert.equal(aliceLookup.runAsUser, 0);
+    assert.equal(aliceLookup.reply, true);
+    assert.match(aliceLookup.cmds, /Win32_LoggedOnUser/);
+    assert.match(aliceLookup.cmds, /EventID=4624/);
+    assert.doesNotMatch(aliceLookup.cmds, /alice|DOMAINE/i);
+
+    // MeshAgent n'annonce l'utilisateur qu'à 09:00, mais Windows indique que
+    // la session interactive a réellement commencé à 08:50.
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'runcommands', sessionid: aliceLookup.sessionid,
+        responseid: aliceLookup.responseid,
+        result: 'USAGECTL_LOGON_EVENT=' + new Date(2026, 7, 31, 8, 50, 0, 0).toISOString(),
+    }, agent);
     assert.ok(sent.some(m => m.type === 'userSessions'));
     assert.equal(sent[sent.length - 1].type, 'ps');
 
@@ -143,22 +159,31 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, loginResponse.res, {});
     const loginBody = JSON.parse((await loginResponse.done).body);
     assert.equal(loginBody.timeout, null);
+    assert.equal(loginBody.measuredFrom, 'windows-interactive-logon');
     assert.equal(loginBody.rows[0].count, 1);
-    assert.equal(loginBody.rows[0].lastMs, 10 * 60 * 1000);
+    assert.equal(loginBody.rows[0].lastMs, 20 * 60 * 1000);
 
     // Une déconnexion agent clôt une session encore ouverte.
     now = new Date(2026, 7, 31, 13, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['bob'] }, agent);
+    const bobLookup = sent[sent.length - 1];
+    assert.equal(bobLookup.action, 'runcommands');
     now = new Date(2026, 7, 31, 13, 20, 0, 0).getTime();
     const pendingResponse = makeResponse();
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, pendingResponse.res, {});
     const pendingBody = JSON.parse((await pendingResponse.done).body);
     assert.equal(pendingBody.rows[0].pendingMs, 20 * 60 * 1000);
+    assert.equal(pendingBody.rows[0].pendingStage, 'waiting-logon-time');
 
     // Certaines versions de MeshAgent confirment explorer.exe sans fournir
     // startTime. On clôt alors à l'instant de détection, après validation de
     // l'utilisateur ou de la session, au lieu de laisser le chrono bloqué.
-    const bobSessionId = sent[sent.length - 1].sessionid;
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'runcommands', sessionid: bobLookup.sessionid,
+        responseid: bobLookup.responseid,
+        result: 'USAGECTL_LOGON_CIM=' + new Date(2026, 7, 31, 13, 0, 0, 0).toISOString(),
+    }, agent);
+    const bobSessionId = bobLookup.sessionid;
     plugin.hook_processAgentData({
         action: 'msg', type: 'userSessions', sessionid: bobSessionId,
         data: [{ Username: 'bob', SessionId: 5, State: 'Active' }],
@@ -181,19 +206,49 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
     now = new Date(2026, 7, 31, 13, 30, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['charlie'] }, agent);
+    const charlieLookup = sent[sent.length - 1];
+    now = new Date(2026, 7, 31, 13, 31, 0, 0).getTime();
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'runcommands', sessionid: charlieLookup.sessionid,
+        result: 'USAGECTL_LOGON_NOT_FOUND',
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'userSessions', sessionid: charlieLookup.sessionid,
+        data: [{ Username: 'charlie', SessionId: 6, State: 'Active' }],
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'ps', sessionid: charlieLookup.sessionid,
+        value: JSON.stringify({ 3456: { cmd: 'C:\\Windows\\explorer.exe', user: 'charlie' } }),
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'psinfo', sessionid: charlieLookup.sessionid, pid: 3456,
+        value: { processName: 'explorer', userName: 'charlie', sessionId: 6, startTime: new Date(now).toISOString() },
+    }, agent);
+
+    const unavailableResponse = makeResponse();
+    plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, unavailableResponse.res, {});
+    const unavailableBody = JSON.parse((await unavailableResponse.done).body);
+    assert.equal(unavailableBody.rows[0].count, 2);
+    assert.equal(unavailableBody.rows[0].failed, 1);
+
+    now = new Date(2026, 7, 31, 13, 32, 0, 0).getTime();
+    plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
+    now = new Date(2026, 7, 31, 13, 35, 0, 0).getTime();
+    plugin.hook_processAgentData({ action: 'coreinfo', users: ['dave'] }, agent);
     now = new Date(2026, 7, 31, 14, 0, 0, 0).getTime();
     plugin.HandleEvent(null, { action: 'nodeconnect', nodeid: nodeId, meshid: meshId, conn: 0 });
     plugin.HandleEvent(null, { action: 'stopped' });
 
     const presencePath = Object.keys(writes).find(p => p.endsWith('usagectl-presence.json'));
     assert.ok(presencePath);
-    assert.doesNotMatch(writes[presencePath], /alice|bob|charlie|DOMAINE/i);
+    assert.doesNotMatch(writes[presencePath], /alice|bob|charlie|dave|DOMAINE/i);
     const stored = JSON.parse(writes[presencePath]);
-    assert.deepEqual(stored.nodes[nodeId].events.map(e => e[1]), [0, 1, 0, 1, 0, 1, 0]);
+    assert.deepEqual(stored.nodes[nodeId].events.map(e => e[1]), [0, 1, 0, 1, 0, 1, 0, 1, 0]);
 
     const loginPath = Object.keys(writes).find(p => p.endsWith('usagectl-logins.json'));
     assert.ok(loginPath);
-    assert.doesNotMatch(writes[loginPath], /alice|bob|charlie|DOMAINE/i);
+    assert.doesNotMatch(writes[loginPath], /alice|bob|charlie|dave|DOMAINE/i);
     const storedLogins = JSON.parse(writes[loginPath]);
-    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'agent-offline']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'start-unavailable', 'agent-offline']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-event-4624', 'windows-logon-session', 'meshagent-session', 'meshagent-session']);
 });

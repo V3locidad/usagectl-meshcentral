@@ -22,11 +22,14 @@ const PRESENCE_VERSION = 1;
 const PRESENCE_FILE = path.join(__dirname, 'usagectl-presence.json');
 const PRESENCE_RETENTION_DAYS = 400;
 const PRESENCE_SAVE_DELAY_MS = 1000;
-const LOGIN_VERSION = 1;
+const LOGIN_VERSION = 2;
 const LOGIN_FILE = path.join(__dirname, 'usagectl-logins.json');
 const LOGIN_RETENTION_DAYS = 400;
 const LOGIN_SAVE_DELAY_MS = 1000;
 const LOGIN_POLL_MS = 5000;
+const LOGIN_LOGON_LOOKBACK_MS = 4 * 60 * 60 * 1000;
+const LOGIN_LOOKUP_TIMEOUT_MS = 15000;
+const LOGIN_LOOKUP_MAX_ATTEMPTS = 2;
 const LOGIN_SESSION_ID = 'usagectl-login-monitor';
 const CACHE_TTL_LIVE_MS = 5 * 60 * 1000;
 const CACHE_MAX_WEEKS = 20;
@@ -197,11 +200,11 @@ module.exports.usagectl = function (parent) {
     }
 
     // ============ Durée d'ouverture de session Windows ============
-    // Le début est la première notification de la nouvelle session reçue depuis
-    // MeshAgent. La fin est l'heure de démarrage d'explorer.exe pour le même
-    // utilisateur. Il n'y a volontairement aucun timeout : une ouverture qui
-    // dure 20 minutes doit rester mesurable. Une extinction ou une fermeture de
-    // session avant explorer.exe est enregistrée comme tentative non aboutie.
+    // Le début est l'heure de création de la session interactive Windows,
+    // retrouvée via Win32_LogonSession ou l'événement de sécurité 4624. La fin
+    // est l'heure de démarrage d'explorer.exe pour le même utilisateur. Il n'y
+    // a volontairement aucun timeout sur la connexion elle-même : une ouverture
+    // de 20 minutes doit rester mesurable.
     let loginData = { version: LOGIN_VERSION, nodes: {} };
     let loginSaveTimer = null;
     const runtimeUsers = Object.create(null); // identifiants en mémoire uniquement
@@ -264,7 +267,12 @@ module.exports.usagectl = function (parent) {
         const cutoff = now - LOGIN_RETENTION_DAYS * 86400000;
         if (rec && Array.isArray(rec.events)) rec.events = rec.events.filter(e => Number(e && e[0]) >= cutoff);
     }
-    function loginSessionId(startAt) { return LOGIN_SESSION_ID + ':' + String(startAt); }
+    function loginSessionId(pending) {
+        const id = pending && typeof pending === 'object'
+            ? (pending.attemptId || pending.detectedAt || pending.startAt)
+            : pending;
+        return LOGIN_SESSION_ID + ':' + String(id);
+    }
     function sendAgent(agent, command) {
         try {
             if (agent && typeof agent.send === 'function') {
@@ -274,6 +282,84 @@ module.exports.usagectl = function (parent) {
         } catch (_) {}
         return false;
     }
+    function loginRuntimeState(nodeId) {
+        if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
+        return runtimeLoginState[nodeId];
+    }
+    function buildLogonLookupCommand(users) {
+        const payload = Buffer.from(JSON.stringify(loginUserKeys(users)), 'utf8').toString('base64');
+        return [
+            "$ErrorActionPreference = 'Stop'",
+            "$wantedJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + payload + "'))",
+            '$wanted = @($wantedJson | ConvertFrom-Json)',
+            'function Get-UsagectlUserKey([string]$value) {',
+            "  if ([string]::IsNullOrWhiteSpace($value)) { return '' }",
+            '  $v = $value.Trim().ToLowerInvariant()',
+            "  $slash = [Math]::Max($v.LastIndexOf('\\'), $v.LastIndexOf('/'))",
+            '  if ($slash -ge 0) { $v = $v.Substring($slash + 1) }',
+            "  $at = $v.IndexOf('@')",
+            '  if ($at -gt 0) { $v = $v.Substring(0, $at) }',
+            '  return $v',
+            '}',
+            '$found = $null',
+            'try {',
+            "  $types = @(2, 10, 11, 12)",
+            '  $hits = foreach ($link in @(Get-CimInstance -ClassName Win32_LoggedOnUser -ErrorAction Stop)) {',
+            '    $account = $link.Antecedent',
+            '    $session = $link.Dependent',
+            '    if (($null -eq $account) -or ($null -eq $session)) { continue }',
+            '    $key = Get-UsagectlUserKey ([string]$account.Name)',
+            '    if (($wanted -contains $key) -and ($types -contains [int]$session.LogonType) -and ($null -ne $session.StartTime)) {',
+            '      [pscustomobject]@{ Time = [datetime]$session.StartTime }',
+            '    }',
+            '  }',
+            '  $found = $hits | Sort-Object Time -Descending | Select-Object -First 1',
+            '} catch {}',
+            'if ($null -ne $found) {',
+            "  Write-Output ('USAGECTL_LOGON_CIM=' + $found.Time.ToUniversalTime().ToString('o'))",
+            '  exit 0',
+            '}',
+            'try {',
+            '  $lookback = ' + String(LOGIN_LOGON_LOOKBACK_MS),
+            "  $xpath = \"*[System[(EventID=4624) and TimeCreated[timediff(@SystemTime) <= $lookback]]] and *[EventData[(Data[@Name='LogonType']='2' or Data[@Name='LogonType']='10' or Data[@Name='LogonType']='11' or Data[@Name='LogonType']='12')]]\"",
+            "  foreach ($event in @(Get-WinEvent -LogName Security -FilterXPath $xpath -MaxEvents 64 -ErrorAction Stop)) {",
+            '    $xml = [xml]$event.ToXml()',
+            '    $values = @{}',
+            "    foreach ($item in @($xml.Event.EventData.Data)) { $values[[string]$item.Name] = [string]$item.'#text' }",
+            "    $key = Get-UsagectlUserKey ([string]$values['TargetUserName'])",
+            '    if ($wanted -contains $key) {',
+            "      Write-Output ('USAGECTL_LOGON_EVENT=' + $event.TimeCreated.ToUniversalTime().ToString('o'))",
+            '      exit 0',
+            '    }',
+            '  }',
+            '} catch {}',
+            "Write-Output 'USAGECTL_LOGON_NOT_FOUND'",
+        ].join('\r\n');
+    }
+    function requestLogonStart(nodeId, agent) {
+        const rec = loginData.nodes[nodeId];
+        if (!rec || !rec.pending) return false;
+        const users = runtimeUsers[nodeId] || [];
+        if (!users.length) return false;
+        const state = loginRuntimeState(nodeId);
+        const sent = sendAgent(agent, {
+            action: 'runcommands', type: 2, runAsUser: 0, reply: true,
+            responseid: 'usagectl-logon-time', sessionid: loginSessionId(rec.pending),
+            cmds: buildLogonLookupCommand(users),
+        });
+        if (sent) {
+            state.logonLookupAt = Date.now();
+            state.logonLookupAttempts = Number(state.logonLookupAttempts || 0) + 1;
+        }
+        return sent;
+    }
+    function useLogonLookupFallback(nodeId) {
+        const rec = loginData.nodes[nodeId];
+        if (!rec || !rec.pending || rec.pending.logonSource) return;
+        rec.pending.logonSource = 'meshagent-session';
+        loginRuntimeState(nodeId).logonLookupFailed = true;
+        saveLoginSoon();
+    }
     function pollLogin(nodeId, agent, force) {
         const rec = loginData.nodes[nodeId];
         const pending = rec && rec.pending;
@@ -282,15 +368,25 @@ module.exports.usagectl = function (parent) {
             runtimeSessionIds[nodeId] = pending.sessionIds.slice();
         }
         const now = Date.now();
+        const state = loginRuntimeState(nodeId);
+        if (!pending.logonSource) {
+            const attempts = Number(state.logonLookupAttempts || 0);
+            const lookupAt = Number(state.logonLookupAt || 0);
+            if (!lookupAt || (now - lookupAt >= LOGIN_LOOKUP_TIMEOUT_MS && attempts < LOGIN_LOOKUP_MAX_ATTEMPTS)) {
+                requestLogonStart(nodeId, agent);
+                return;
+            }
+            if (now - lookupAt < LOGIN_LOOKUP_TIMEOUT_MS) return;
+            useLogonLookupFallback(nodeId);
+        }
         if (!force && Number(loginPollAt[nodeId]) + LOGIN_POLL_MS > now) return;
-        const sessionid = loginSessionId(pending.startAt);
+        const sessionid = loginSessionId(pending);
         if (!runtimeSessionIds[nodeId]) {
             sendAgent(agent, { action: 'msg', type: 'userSessions', sessionid });
         }
         if (sendAgent(agent, { action: 'msg', type: 'ps', sessionid })) {
             loginPollAt[nodeId] = now;
-            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
-            runtimeLoginState[nodeId].lastPollAt = now;
+            state.lastPollAt = now;
         }
     }
     function pollPendingLogins() {
@@ -306,7 +402,7 @@ module.exports.usagectl = function (parent) {
         const rec = loginNodeRecord(nodeId, meshId);
         if (rec.pending) return;
         const now = Number.isFinite(atMs) ? atMs : Date.now();
-        rec.pending = { startAt: now };
+        rec.pending = { attemptId: now, detectedAt: now, startAt: now };
         runtimeUsers[nodeId] = loginUserKeys(users);
         runtimeExplorerCandidates[nodeId] = Object.create(null);
         runtimeLoginState[nodeId] = {};
@@ -319,7 +415,7 @@ module.exports.usagectl = function (parent) {
         if (!rec || !rec.pending) return;
         const startAt = Number(rec.pending.startAt);
         const endAt = Number.isFinite(readyAt) ? readyAt : Date.now();
-        rec.events.push([startAt, endAt, Math.max(0, endAt - startAt), status || 'ready']);
+        rec.events.push([startAt, endAt, Math.max(0, endAt - startAt), status || 'ready', rec.pending.logonSource || 'meshagent-session']);
         delete rec.pending;
         delete loginPollAt[nodeId];
         delete runtimeSessionIds[nodeId];
@@ -353,11 +449,29 @@ module.exports.usagectl = function (parent) {
             command.sessionid.indexOf(LOGIN_SESSION_ID + ':') !== 0) return false;
         const nodeId = agent && agent.dbNodeKey;
         const rec = nodeId && loginData.nodes[nodeId];
-        if (!rec || !rec.pending || command.sessionid !== loginSessionId(rec.pending.startAt)) return true;
+        if (!rec || !rec.pending || command.sessionid !== loginSessionId(rec.pending)) return true;
+
+        if (command.type === 'runcommands') {
+            const result = String(command.result || '');
+            const match = result.match(/USAGECTL_LOGON_(CIM|EVENT)=([^\r\n]+)/);
+            const eventAt = match ? new Date(match[2].trim()).getTime() : NaN;
+            const detectedAt = Number(rec.pending.detectedAt || rec.pending.startAt);
+            if (Number.isFinite(eventAt) && eventAt >= detectedAt - LOGIN_LOGON_LOOKBACK_MS && eventAt <= detectedAt + 5 * 60000) {
+                rec.pending.startAt = eventAt;
+                rec.pending.logonSource = match[1] === 'CIM' ? 'windows-logon-session' : 'windows-event-4624';
+                const state = loginRuntimeState(nodeId);
+                state.logonLookupCompletedAt = Date.now();
+                delete state.logonLookupFailed;
+                saveLoginSoon();
+            } else {
+                useLogonLookupFallback(nodeId);
+            }
+            pollLogin(nodeId, agent, true);
+            return true;
+        }
 
         if (command.type === 'userSessions') {
-            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
-            runtimeLoginState[nodeId].lastAgentReplyAt = Date.now();
+            loginRuntimeState(nodeId).lastAgentReplyAt = Date.now();
             const wanted = runtimeUsers[nodeId] || [];
             const ids = [];
             (Array.isArray(command.data) ? command.data : []).forEach(s => {
@@ -379,9 +493,9 @@ module.exports.usagectl = function (parent) {
 
         if (command.type === 'ps') {
             const replyAt = Date.now();
-            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
-            runtimeLoginState[nodeId].lastAgentReplyAt = replyAt;
-            runtimeLoginState[nodeId].lastProcessReplyAt = replyAt;
+            const state = loginRuntimeState(nodeId);
+            state.lastAgentReplyAt = replyAt;
+            state.lastProcessReplyAt = replyAt;
             let processes = null;
             try { processes = (typeof command.value === 'string') ? JSON.parse(command.value) : command.value; } catch (_) {}
             if (!processes || typeof processes !== 'object') return true;
@@ -401,8 +515,8 @@ module.exports.usagectl = function (parent) {
                 remembered[String(p.pid)] = { owner: p.owner, seenAt: replyAt };
                 sendAgent(agent, { action: 'msg', type: 'psinfo', pid: p.pid, sessionid: command.sessionid });
             });
-            if (Object.keys(remembered).length) runtimeLoginState[nodeId].explorerSeenAt = replyAt;
-            else delete runtimeLoginState[nodeId].explorerSeenAt;
+            if (Object.keys(remembered).length) state.explorerSeenAt = replyAt;
+            else delete state.explorerSeenAt;
             return true;
         }
 
@@ -411,9 +525,9 @@ module.exports.usagectl = function (parent) {
             const candidate = candidates[String(command.pid)];
             if (!candidate && !explorerProcess(command)) return true;
             const replyAt = Date.now();
-            if (!runtimeLoginState[nodeId]) runtimeLoginState[nodeId] = {};
-            runtimeLoginState[nodeId].lastAgentReplyAt = replyAt;
-            runtimeLoginState[nodeId].lastProcessInfoAt = replyAt;
+            const state = loginRuntimeState(nodeId);
+            state.lastAgentReplyAt = replyAt;
+            state.lastProcessInfoAt = replyAt;
             const wanted = runtimeUsers[nodeId] || [];
             const owner = processInfoUser(command) || (candidate && candidate.owner) || '';
             if (owner && wanted.length && wanted.indexOf(owner) < 0) return true;
@@ -424,10 +538,11 @@ module.exports.usagectl = function (parent) {
             const rawStart = command.value && (command.value.startTime || command.value.StartTime || command.value.creationDate);
             const processStart = rawStart ? new Date(rawStart).getTime() : NaN;
             const attemptStart = Number(rec.pending.startAt);
+            const readyStatus = rec.pending.logonSource === 'meshagent-session' ? 'start-unavailable' : 'ready';
             // Une petite tolérance couvre le délai entre la création très rapide
             // de la session et l'arrivée du coreinfo sur le serveur.
             if (Number.isFinite(processStart) && processStart >= attemptStart - 30000 && processStart <= Date.now() + 5000) {
-                finishLoginAttempt(nodeId, Math.max(attemptStart, processStart), 'ready');
+                finishLoginAttempt(nodeId, Math.max(attemptStart, processStart), readyStatus);
             } else {
                 // Certains MeshAgent Windows confirment explorer mais ne donnent
                 // pas startTime. Une identité ou une session concordante suffit
@@ -436,7 +551,7 @@ module.exports.usagectl = function (parent) {
                 const sessionMatches = Number.isFinite(processSessionId) && wantedSessions.indexOf(processSessionId) >= 0;
                 if (ownerMatches || sessionMatches) {
                     const detectedAt = candidate && Number(candidate.seenAt);
-                    finishLoginAttempt(nodeId, Number.isFinite(detectedAt) ? detectedAt : replyAt, 'ready');
+                    finishLoginAttempt(nodeId, Number.isFinite(detectedAt) ? detectedAt : replyAt, readyStatus);
                 }
             }
             return true;
@@ -457,12 +572,12 @@ module.exports.usagectl = function (parent) {
             const previousUsers = nodeId ? runtimeUsers[nodeId] : null;
             runtimeUsers[nodeId] = nextUsers;
             if (previousUsers) {
-                const added = nextUsers.some(u => previousUsers.indexOf(u) < 0);
+                const addedUsers = nextUsers.filter(u => previousUsers.indexOf(u) < 0);
                 const loginRec = loginData.nodes[nodeId];
                 if (loginRec && loginRec.pending && nextUsers.length === 0) {
                     finishLoginAttempt(nodeId, Date.now(), 'session-ended');
-                } else if (added && nextUsers.length > 0 && isWindowsAgent(agent, command)) {
-                    startLoginAttempt(nodeId, meshId, command.users, agent, Date.now());
+                } else if (addedUsers.length > 0 && isWindowsAgent(agent, command)) {
+                    startLoginAttempt(nodeId, meshId, addedUsers, agent, Date.now());
                 }
             } else {
                 const loginRec = nodeId && loginData.nodes[nodeId];
@@ -1163,7 +1278,8 @@ module.exports.usagectl = function (parent) {
                     const pendingState = runtimeLoginState[n._id] || {};
                     let pendingStage = null;
                     if (pending) {
-                        if (pendingState.explorerSeenAt) pendingStage = 'explorer-seen';
+                        if (!pending.logonSource) pendingStage = 'waiting-logon-time';
+                        else if (pendingState.explorerSeenAt) pendingStage = 'explorer-seen';
                         else if (pendingState.lastProcessReplyAt) pendingStage = 'waiting-explorer';
                         else if (pendingState.lastPollAt) pendingStage = 'waiting-agent';
                         else pendingStage = 'starting';
@@ -1190,7 +1306,7 @@ module.exports.usagectl = function (parent) {
                 });
                 sendJson(res, 200, {
                     rows, weekMode: range.weekMode, weekLabel: range.label, days: range.days,
-                    measuredFrom: 'meshagent-session', measuredUntil: 'explorer.exe', timeout: null,
+                    measuredFrom: 'windows-interactive-logon', measuredUntil: 'explorer.exe', timeout: null,
                 });
             });
         });

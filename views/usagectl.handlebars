@@ -523,7 +523,7 @@
     var r = lastLoginResult; if (!r) return;
     var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
     var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
-             + '<div class="metric-note">Le chrono démarre lorsque MeshAgent détecte la nouvelle session Windows et s’arrête au démarrage d’<b>explorer.exe</b> pour le même utilisateur. Il n’y a aucun timeout : une connexion de 10, 20 minutes ou davantage reste « en cours » jusqu’à l’apparition du bureau.</div>';
+             + '<div class="metric-note">Le chrono démarre à la création de la session interactive Windows, juste après la validation des identifiants, et s’arrête au démarrage d’<b>explorer.exe</b> pour le même utilisateur. Il n’y a aucun timeout : une connexion de 10, 20 minutes ou davantage est entièrement mesurée.</div>';
     if (!rows.length) {
       html += '<div class="empty">Aucun poste Windows.</div>';
     } else {
@@ -538,7 +538,8 @@
             + '</tr></thead><tbody>';
       rows.forEach(function (n) {
         var pendingDetail = '';
-        if (n.pendingStage === 'waiting-agent') pendingDetail = 'attente de la réponse de MeshAgent';
+        if (n.pendingStage === 'waiting-logon-time') pendingDetail = 'lecture de l’heure de connexion Windows';
+        else if (n.pendingStage === 'waiting-agent') pendingDetail = 'attente de la réponse de MeshAgent';
         else if (n.pendingStage === 'waiting-explorer') pendingDetail = 'réponse reçue, explorer.exe pas encore détecté';
         else if (n.pendingStage === 'explorer-seen') pendingDetail = 'explorer.exe détecté, validation en cours';
         var state = n.pendingStartedAt
@@ -556,7 +557,7 @@
       });
       html += '</tbody></table>';
     }
-    html += '<div style="margin-top:8px;font-size:11px;color:#777">Une tentative non aboutie correspond à une session fermée ou à un agent déconnecté avant le démarrage d’explorer.exe. Aucun nom d’utilisateur n’est conservé.</div>';
+    html += '<div style="margin-top:8px;font-size:11px;color:#777">Une tentative non aboutie correspond à une session fermée, à un agent déconnecté avant le démarrage d’explorer.exe ou à une heure de création de session indisponible. Aucun nom d’utilisateur n’est conservé.</div>';
     $('content').innerHTML = html;
   }
 
@@ -863,7 +864,7 @@
     var rows = (loginTimes && loginTimes.rows) || [];
     var html = '<div class="page-break"></div>'
              + '<h2>Temps d’ouverture de session Windows</h2>'
-             + '<div class="muted" style="margin-bottom:10px">Délai entre la détection de la nouvelle session par MeshAgent et le démarrage d’explorer.exe pour le même utilisateur. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
+             + '<div class="muted" style="margin-bottom:10px">Délai entre la création de la session interactive Windows, juste après la validation des identifiants, et le démarrage d’explorer.exe pour le même utilisateur. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
     if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
     html += '<table><thead><tr>'
           + '<th>Poste</th><th>Salle</th><th style="width:92px">État</th>'
@@ -887,7 +888,7 @@
             + '<td>' + n.count + '</td><td>' + n.failed + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une tentative non aboutie correspond à une session fermée ou à un agent déconnecté avant le démarrage d’explorer.exe. Aucun nom d’utilisateur n’est conservé.</div>';
+    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une tentative non aboutie correspond à une session fermée, à un agent déconnecté avant le démarrage d’explorer.exe ou à une heure de création de session indisponible. Aucun nom d’utilisateur n’est conservé.</div>';
     return html;
   }
 

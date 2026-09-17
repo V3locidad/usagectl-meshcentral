@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.41
+
+- Le départ du chronomètre utilise désormais l'heure de création de la session interactive Windows (`Win32_LogonSession`), avec l'événement de sécurité 4624 en secours, au lieu de la notification tardive `coreinfo.users`.
+- Le plugin peut retrouver rétrospectivement une connexion ayant réellement duré 10 ou 20 minutes même si MeshAgent ne signale l'utilisateur qu'au moment où le bureau apparaît.
+- Si Windows ne fournit aucune heure de création fiable, la tentative est classée non aboutie au lieu d'enregistrer une fausse mesure de quelques secondes.
+- Les anciennes mesures de 0 à 9 secondes, calculées avec le mauvais point de départ, sont réinitialisées lors de cette mise à jour.
+
 ## 0.0.40
 
 - Ajout du temps d'ouverture de session Windows dans les rapports PDF, pour les semaines précises comme pour les périodes glissantes.
