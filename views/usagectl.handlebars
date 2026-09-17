@@ -37,6 +37,8 @@
   .delta-up { color: #2ecc40; }
   .delta-down { color: #d9534f; }
   .delta-flat { color: #888; }
+  .login-pending { color: #d97706; font-weight: bold; }
+  .login-ready { color: #198754; }
   .progress { height: 16px; background: #eee; border-radius: 3px; overflow: hidden; margin: 6px 0; }
   .progress > span { display: block; height: 100%; background: #0d6efd; transition: width 0.3s; }
   .metric-note { margin: 0 0 8px 0; padding: 7px 10px; background: #eef6ff; border-left: 3px solid #0d6efd; color: #345; font-size: 11px; }
@@ -86,6 +88,7 @@
   <div class="tab" data-tab="heatmap">Heat-map</div>
   <div class="tab" data-tab="horsHeures">Hors-heures (gaspillage)</div>
   <div class="tab" data-tab="topPostes">Top postes</div>
+  <div class="tab" data-tab="loginTimes">Temps de connexion</div>
 </div>
 
 <div id="progressBox" style="display:none">
@@ -116,6 +119,16 @@
     if (h === 0) return m + 'min';
     return h + 'h' + (m < 10 ? '0' + m : m);
   }
+  function formatDurationMs(ms) {
+    if (ms == null || !isFinite(ms) || ms < 0) return '—';
+    var sec = Math.round(ms / 1000);
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    if (h > 0) return h + 'h' + (m < 10 ? '0' + m : m) + 'min';
+    if (m > 0) return m + 'min ' + (s < 10 ? '0' + s : s) + 's';
+    return s + 's';
+  }
   function occBar(pct) {
     var p = Math.max(0, Math.min(100, pct || 0));
     var lvl = (p < 10) ? 0 : (p < 30) ? 1 : (p < 60) ? 2 : 3;
@@ -138,9 +151,11 @@
   var sallesSort = { key: 'name', dir: 1 }; // dir: 1 asc, -1 desc
   var lastSallesResult = null;
   var lastDetailResult = null;
+  var lastLoginResult = null;
   var inDetail = false;
   var detailMeshid = null;
   var progressTimer = null;
+  var loginRefreshTimer = null;
 
   function startProgress() {
     if (progressTimer) return;
@@ -483,6 +498,63 @@
     $('content').innerHTML = html;
   }
 
+  // ====== Onglet Temps de connexion ======
+  function scheduleLoginRefresh() {
+    if (loginRefreshTimer) clearTimeout(loginRefreshTimer);
+    loginRefreshTimer = setTimeout(function () {
+      loginRefreshTimer = null;
+      if (currentTab === 'loginTimes') loadLoginTimes(true);
+    }, 15000);
+  }
+  function loadLoginTimes(silent) {
+    currentTab = 'loginTimes'; setActiveTab();
+    if (!silent) $('content').innerHTML = '<div class="empty">Chargement des temps de connexion…</div>';
+    api('loginTimes', getQuery()).then(function (r) {
+      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
+      lastLoginResult = r;
+      renderLoginTimes();
+      scheduleLoginRefresh();
+    }).catch(function (e) {
+      $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>';
+      scheduleLoginRefresh();
+    });
+  }
+  function renderLoginTimes() {
+    var r = lastLoginResult; if (!r) return;
+    var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
+    var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
+             + '<div class="metric-note">Le chrono démarre lorsque MeshAgent détecte la nouvelle session Windows et s’arrête au démarrage d’<b>explorer.exe</b> pour le même utilisateur. Il n’y a aucun timeout : une connexion de 10, 20 minutes ou davantage reste « en cours » jusqu’à l’apparition du bureau.</div>';
+    if (!rows.length) {
+      html += '<div class="empty">Aucun poste Windows.</div>';
+    } else {
+      html += '<table><thead><tr>'
+            + '<th>Poste</th><th>Salle</th>'
+            + '<th style="width:190px">État actuel</th>'
+            + '<th style="width:130px">Dernière</th>'
+            + '<th style="width:130px">Moyenne</th>'
+            + '<th style="width:130px">Maximum</th>'
+            + '<th style="width:90px">Mesures</th>'
+            + '<th style="width:120px">Non abouties</th>'
+            + '</tr></thead><tbody>';
+      rows.forEach(function (n) {
+        var state = n.pendingStartedAt
+          ? '<span class="login-pending">⏳ En cours depuis ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>'
+          : (n.count ? '<span class="login-ready">✓ Mesuré</span>' : '<span style="color:#999">En attente d’une connexion</span>');
+        html += '<tr><td>' + escapeHtml(n.name) + '</td>'
+              + '<td>' + escapeHtml(n.mesh) + '</td>'
+              + '<td>' + state + '</td>'
+              + '<td>' + formatDurationMs(n.lastMs) + '</td>'
+              + '<td>' + formatDurationMs(n.avgMs) + '</td>'
+              + '<td>' + formatDurationMs(n.maxMs) + '</td>'
+              + '<td>' + n.count + '</td>'
+              + '<td>' + n.failed + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '<div style="margin-top:8px;font-size:11px;color:#777">Une tentative non aboutie correspond à une session fermée ou à un agent déconnecté avant le démarrage d’explorer.exe. Aucun nom d’utilisateur n’est conservé.</div>';
+    $('content').innerHTML = html;
+  }
+
   // ====== Tabs ======
   function setActiveTab() {
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
@@ -490,10 +562,12 @@
     });
   }
   function loadCurrentTab(force) {
+    if (currentTab !== 'loginTimes' && loginRefreshTimer) { clearTimeout(loginRefreshTimer); loginRefreshTimer = null; }
     if (currentTab === 'salles') loadSalles(force);
     else if (currentTab === 'heatmap') loadHeatmap();
     else if (currentTab === 'horsHeures') loadHorsHeures();
     else if (currentTab === 'topPostes') loadTopPostes();
+    else if (currentTab === 'loginTimes') loadLoginTimes(false);
   }
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
     t.onclick = function () { currentTab = t.getAttribute('data-tab'); loadCurrentTab(false); };
@@ -515,6 +589,7 @@
   $('filterInput').oninput = function () {
     if (currentTab === 'salles') { inDetail ? renderSalleDetail() : renderSalles(); }
     else if (currentTab === 'horsHeures') loadHorsHeures();
+    else if (currentTab === 'loginTimes') renderLoginTimes();
   };
 
   // ====== Export PDF (téléchargement direct via html2pdf.js) ======

@@ -1,6 +1,6 @@
 {
   "name": "usagectl-meshcentral",
-  "version": "0.0.37",
+  "version": "0.0.38",
   "private": true,
   "scripts": {
     "test": "TZ=Europe/Paris node --test"

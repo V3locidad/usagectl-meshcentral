@@ -28,11 +28,11 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     const writes = {};
 
     Date.now = () => now;
-    fs.existsSync = p => String(p).endsWith('usagectl-cache.json') || String(p).endsWith('usagectl-presence.json')
+    fs.existsSync = p => String(p).endsWith('usagectl-cache.json') || String(p).endsWith('usagectl-presence.json') || String(p).endsWith('usagectl-logins.json')
         ? false
         : realExistsSync(p);
     fs.writeFileSync = (p, data, ...args) => {
-        if (String(p).endsWith('usagectl-cache.json') || String(p).endsWith('usagectl-presence.json.tmp')) {
+        if (String(p).endsWith('usagectl-cache.json') || String(p).endsWith('usagectl-presence.json.tmp') || String(p).endsWith('usagectl-logins.json.tmp')) {
             writes[String(p)] = String(data);
             return;
         }
@@ -40,6 +40,11 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     };
     fs.renameSync = (from, to) => {
         if (String(from).endsWith('usagectl-presence.json.tmp') && String(to).endsWith('usagectl-presence.json')) {
+            writes[String(to)] = writes[String(from)];
+            delete writes[String(from)];
+            return;
+        }
+        if (String(from).endsWith('usagectl-logins.json.tmp') && String(to).endsWith('usagectl-logins.json')) {
             writes[String(to)] = writes[String(from)];
             delete writes[String(from)];
             return;
@@ -82,7 +87,13 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
         RemoveAllEventDispatch() {},
     };
     const plugin = require('../usagectl').usagectl({ parent: meshServer });
-    const agent = { dbNodeKey: nodeId, dbMeshKey: meshId };
+    const sent = [];
+    const agent = {
+        dbNodeKey: nodeId,
+        dbMeshKey: meshId,
+        agentInfo: { agentId: 4 },
+        send(data) { sent.push(JSON.parse(data)); },
+    };
 
     // MeshCentral charge le plugin alors que les agents peuvent être déjà
     // connectés : tous les nœuds doivent être amorcés immédiatement.
@@ -90,6 +101,25 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
     now = new Date(2026, 7, 31, 9, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['DOMAINE\\alice'] }, agent);
+    assert.ok(sent.some(m => m.type === 'userSessions'));
+    assert.equal(sent[sent.length - 1].type, 'ps');
+
+    // Le chronomètre reste ouvert jusqu'au démarrage réel d'explorer.exe.
+    now = new Date(2026, 7, 31, 9, 10, 0, 0).getTime();
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'userSessions', sessionid: sent[sent.length - 1].sessionid,
+        data: [{ Domain: 'DOMAINE', Username: 'alice', SessionId: 4, State: 'Active' }],
+    }, agent);
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'ps', sessionid: sent[sent.length - 1].sessionid,
+        value: JSON.stringify({ 1234: { cmd: 'C:\\Windows\\explorer.exe', user: 'DOMAINE\\alice' } }),
+    }, agent);
+    assert.equal(sent[sent.length - 1].type, 'psinfo');
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'psinfo', sessionid: sent[sent.length - 1].sessionid, pid: 1234,
+        value: { processName: 'explorer.exe', userName: 'DOMAINE\\alice', sessionId: 4, startTime: new Date(now).toISOString() },
+    }, agent);
+
     now = new Date(2026, 7, 31, 11, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
     now = new Date(2026, 7, 31, 12, 0, 0, 0).getTime();
@@ -108,9 +138,21 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(body.salles[0].avgPowerPct, 100);
     assert.equal(body.salles[0].avgPowerMinutes, 240);
 
+    const loginResponse = makeResponse();
+    plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, loginResponse.res, {});
+    const loginBody = JSON.parse((await loginResponse.done).body);
+    assert.equal(loginBody.timeout, null);
+    assert.equal(loginBody.rows[0].count, 1);
+    assert.equal(loginBody.rows[0].lastMs, 10 * 60 * 1000);
+
     // Une déconnexion agent clôt une session encore ouverte.
     now = new Date(2026, 7, 31, 13, 0, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: ['bob'] }, agent);
+    now = new Date(2026, 7, 31, 13, 20, 0, 0).getTime();
+    const pendingResponse = makeResponse();
+    plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, pendingResponse.res, {});
+    const pendingBody = JSON.parse((await pendingResponse.done).body);
+    assert.equal(pendingBody.rows[0].pendingMs, 20 * 60 * 1000);
     now = new Date(2026, 7, 31, 14, 0, 0, 0).getTime();
     plugin.HandleEvent(null, { action: 'nodeconnect', nodeid: nodeId, meshid: meshId, conn: 0 });
     plugin.HandleEvent(null, { action: 'stopped' });
@@ -120,4 +162,10 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.doesNotMatch(writes[presencePath], /alice|bob|DOMAINE/i);
     const stored = JSON.parse(writes[presencePath]);
     assert.deepEqual(stored.nodes[nodeId].events.map(e => e[1]), [0, 1, 0, 1, 0]);
+
+    const loginPath = Object.keys(writes).find(p => p.endsWith('usagectl-logins.json'));
+    assert.ok(loginPath);
+    assert.doesNotMatch(writes[loginPath], /alice|bob|DOMAINE/i);
+    const storedLogins = JSON.parse(writes[loginPath]);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'agent-offline']);
 });

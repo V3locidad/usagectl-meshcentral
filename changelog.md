@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.38
+
+- Ajout d'un onglet « Temps de connexion » avec dernière durée, moyenne, maximum et nombre de mesures par poste Windows.
+- Le chronomètre démarre à la détection d'une nouvelle session par MeshAgent et s'arrête au démarrage d'`explorer.exe` pour le même utilisateur.
+- Aucun timeout : une ouverture de session de 10, 20 minutes ou davantage reste suivie jusqu'à l'apparition du bureau.
+- Les tentatives interrompues par une fermeture de session ou une déconnexion de l'agent sont conservées comme non abouties.
+- Les mesures en cours survivent aux rechargements du plugin et aucun nom d'utilisateur n'est enregistré.
+
 ## 0.0.37
 
 - Séparation des durées moyennes en trois colonnes : temps utilisé, temps allumé et temps de semaine déjà mesuré.

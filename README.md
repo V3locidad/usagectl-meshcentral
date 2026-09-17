@@ -26,6 +26,12 @@ Dans la vue Salles, les durées sont réparties en trois colonnes :
 
 Le fichier `usagectl-presence.json` ne contient aucun nom de compte : uniquement des horodatages et des nombres de sessions.
 
+## Temps d'ouverture de session Windows
+
+L'onglet **Temps de connexion** mesure, pour chaque poste Windows, le délai entre la détection d'une nouvelle session par MeshAgent et le démarrage d'`explorer.exe` pour ce même utilisateur. La détection de session intervient après la validation des identifiants par Windows : l'instant physique où la touche Entrée est pressée n'est pas exposé par MeshAgent.
+
+Il n'existe aucune limite de durée : une connexion de 10, 20 minutes ou davantage reste affichée comme « en cours ». Si la session se ferme ou si le poste se déconnecte avant le démarrage d'`explorer.exe`, la tentative est conservée comme non aboutie avec sa durée. Les mesures en cours sont enregistrées sur disque afin de survivre à un rechargement du plugin.
+
 ## Important après la mise à jour
 
 MeshCentral expose l'état courant des sessions, mais ne conserve pas leur historique. La mesure de présence commence donc au premier démarrage de cette version du plugin. Les semaines antérieures restent disponibles pour les données électriques, mais pas pour l'occupation humaine.
@@ -51,6 +57,7 @@ La réponse indique la date de début, le nombre de postes suivis et la durée d
 ## Données locales
 
 - `usagectl-presence.json` : historique compact des changements de présence ;
+- `usagectl-logins.json` : durées d'ouverture de session, sans nom d'utilisateur ;
 - `usagectl-cache.json` : agrégats hebdomadaires recalculables.
 
-Conservez `usagectl-presence.json` dans vos sauvegardes : contrairement au cache, il ne peut pas être reconstruit à partir de la power timeline.
+Conservez `usagectl-presence.json` et `usagectl-logins.json` dans vos sauvegardes : contrairement au cache, ils ne peuvent pas être reconstruits à partir de la power timeline.

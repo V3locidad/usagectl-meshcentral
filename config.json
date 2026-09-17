@@ -1,9 +1,9 @@
 {
   "name": "usagectl",
   "shortName": "usagectl",
-  "version": "0.0.37",
+  "version": "0.0.38",
   "author": "V3locidad",
-  "description": "Occupation réelle par salle et par poste, calculée à partir des sessions OS ouvertes remontées par MeshAgent. Le taux d'allumage et le gaspillage hors heures restent affichés séparément.",
+  "description": "Occupation réelle par salle et par poste, temps d'ouverture de session Windows, taux d'allumage et gaspillage hors heures, à partir des données MeshAgent.",
   "hasAdminPanel": true,
   "homepage": "https://github.com/V3locidad/usagectl-meshcentral",
   "changelogUrl": "https://raw.githubusercontent.com/V3locidad/usagectl-meshcentral/main/changelog.md",

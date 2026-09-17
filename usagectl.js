@@ -22,6 +22,12 @@ const PRESENCE_VERSION = 1;
 const PRESENCE_FILE = path.join(__dirname, 'usagectl-presence.json');
 const PRESENCE_RETENTION_DAYS = 400;
 const PRESENCE_SAVE_DELAY_MS = 1000;
+const LOGIN_VERSION = 1;
+const LOGIN_FILE = path.join(__dirname, 'usagectl-logins.json');
+const LOGIN_RETENTION_DAYS = 400;
+const LOGIN_SAVE_DELAY_MS = 1000;
+const LOGIN_POLL_MS = 5000;
+const LOGIN_SESSION_ID = 'usagectl-login-monitor';
 const CACHE_TTL_LIVE_MS = 5 * 60 * 1000;
 const CACHE_MAX_WEEKS = 20;
 const CONCURRENCY = 6;
@@ -190,13 +196,237 @@ module.exports.usagectl = function (parent) {
         return { occupiedMs, coverageMs, hasData: coverageMs > 0 };
     }
 
+    // ============ Durée d'ouverture de session Windows ============
+    // Le début est la première notification de la nouvelle session reçue depuis
+    // MeshAgent. La fin est l'heure de démarrage d'explorer.exe pour le même
+    // utilisateur. Il n'y a volontairement aucun timeout : une ouverture qui
+    // dure 20 minutes doit rester mesurable. Une extinction ou une fermeture de
+    // session avant explorer.exe est enregistrée comme tentative non aboutie.
+    let loginData = { version: LOGIN_VERSION, nodes: {} };
+    let loginSaveTimer = null;
+    const runtimeUsers = Object.create(null); // identifiants en mémoire uniquement
+    const runtimeSessionIds = Object.create(null);
+    const loginPollAt = Object.create(null);
+    try {
+        if (fs.existsSync(LOGIN_FILE)) {
+            const j = JSON.parse(fs.readFileSync(LOGIN_FILE, 'utf8'));
+            if (j && j.version === LOGIN_VERSION && j.nodes && typeof j.nodes === 'object') loginData = j;
+        }
+    } catch (_) {}
+
+    function saveLoginNow() {
+        if (loginSaveTimer) { clearTimeout(loginSaveTimer); loginSaveTimer = null; }
+        const tmp = LOGIN_FILE + '.tmp';
+        try {
+            fs.writeFileSync(tmp, JSON.stringify(loginData));
+            fs.renameSync(tmp, LOGIN_FILE);
+        } catch (_) {
+            try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+        }
+    }
+    function saveLoginSoon() {
+        if (loginSaveTimer) return;
+        loginSaveTimer = setTimeout(saveLoginNow, LOGIN_SAVE_DELAY_MS);
+        if (loginSaveTimer && typeof loginSaveTimer.unref === 'function') loginSaveTimer.unref();
+    }
+    function loginUserKey(value) {
+        let s = String(value || '').trim().toLowerCase();
+        if (!s) return '';
+        const slash = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'));
+        if (slash >= 0) s = s.substring(slash + 1);
+        const at = s.indexOf('@');
+        if (at > 0) s = s.substring(0, at);
+        return s;
+    }
+    function loginUserKeys(users) {
+        const out = [];
+        (Array.isArray(users) ? users : []).forEach(u => {
+            const k = loginUserKey(u);
+            if (k && out.indexOf(k) < 0) out.push(k);
+        });
+        return out;
+    }
+    function isWindowsAgent(agent, command) {
+        const id = agent && agent.agentInfo && Number(agent.agentInfo.agentId);
+        if (Number.isFinite(id)) return ((id > 0 && id < 5) || (id > 41 && id < 44));
+        return !!(command && typeof command.osdesc === 'string' && /windows/i.test(command.osdesc));
+    }
+    function loginNodeRecord(nodeId, meshId) {
+        let rec = loginData.nodes[nodeId];
+        if (!rec) rec = loginData.nodes[nodeId] = { meshid: meshId || '', events: [] };
+        if (meshId) rec.meshid = meshId;
+        if (!Array.isArray(rec.events)) rec.events = [];
+        return rec;
+    }
+    function pruneLoginRecord(rec, now) {
+        const cutoff = now - LOGIN_RETENTION_DAYS * 86400000;
+        if (rec && Array.isArray(rec.events)) rec.events = rec.events.filter(e => Number(e && e[0]) >= cutoff);
+    }
+    function loginSessionId(startAt) { return LOGIN_SESSION_ID + ':' + String(startAt); }
+    function sendAgent(agent, command) {
+        try {
+            if (agent && typeof agent.send === 'function') {
+                agent.send(JSON.stringify(command));
+                return true;
+            }
+        } catch (_) {}
+        return false;
+    }
+    function pollLogin(nodeId, agent, force) {
+        const rec = loginData.nodes[nodeId];
+        const pending = rec && rec.pending;
+        if (!pending) return;
+        if (!runtimeSessionIds[nodeId] && Array.isArray(pending.sessionIds) && pending.sessionIds.length) {
+            runtimeSessionIds[nodeId] = pending.sessionIds.slice();
+        }
+        const now = Date.now();
+        if (!force && Number(loginPollAt[nodeId]) + LOGIN_POLL_MS > now) return;
+        const sessionid = loginSessionId(pending.startAt);
+        if (!runtimeSessionIds[nodeId]) {
+            sendAgent(agent, { action: 'msg', type: 'userSessions', sessionid });
+        }
+        if (sendAgent(agent, { action: 'msg', type: 'ps', sessionid })) {
+            loginPollAt[nodeId] = now;
+        }
+    }
+    function pollPendingLogins() {
+        const online = obj.meshServer.webserver && obj.meshServer.webserver.wsagents;
+        if (!online) return;
+        Object.keys(loginData.nodes).forEach(nodeId => {
+            const rec = loginData.nodes[nodeId];
+            if (rec && rec.pending && online[nodeId]) pollLogin(nodeId, online[nodeId], false);
+        });
+    }
+    function startLoginAttempt(nodeId, meshId, users, agent, atMs) {
+        if (!nodeId) return;
+        const rec = loginNodeRecord(nodeId, meshId);
+        if (rec.pending) return;
+        const now = Number.isFinite(atMs) ? atMs : Date.now();
+        rec.pending = { startAt: now };
+        runtimeUsers[nodeId] = loginUserKeys(users);
+        pruneLoginRecord(rec, now);
+        saveLoginSoon();
+        pollLogin(nodeId, agent, true);
+    }
+    function finishLoginAttempt(nodeId, readyAt, status) {
+        const rec = loginData.nodes[nodeId];
+        if (!rec || !rec.pending) return;
+        const startAt = Number(rec.pending.startAt);
+        const endAt = Number.isFinite(readyAt) ? readyAt : Date.now();
+        rec.events.push([startAt, endAt, Math.max(0, endAt - startAt), status || 'ready']);
+        delete rec.pending;
+        delete loginPollAt[nodeId];
+        delete runtimeSessionIds[nodeId];
+        pruneLoginRecord(rec, endAt);
+        saveLoginSoon();
+    }
+    function explorerProcess(command) {
+        const v = (command && command.value && typeof command.value === 'object') ? command.value : {};
+        const name = String(v.processName || v.ProcessName || v.name || v.Name || v.cmd || v.Cmd || '').toLowerCase();
+        return /(^|[\\/])explorer\.exe(?:\s|$)/.test(name) || name === 'explorer.exe';
+    }
+    function processInfoUser(command) {
+        const v = (command && command.value && typeof command.value === 'object') ? command.value : {};
+        if (v.userName || v.UserName) return loginUserKey(v.userName || v.UserName);
+        const user = v.processUser || v.ProcessUser;
+        const domain = v.processDomain || v.ProcessDomain;
+        if (user) return loginUserKey((domain ? domain + '\\' : '') + user);
+        return '';
+    }
+    function handleLoginAgentMessage(command, agent) {
+        if (!command || command.action !== 'msg' || typeof command.sessionid !== 'string' ||
+            command.sessionid.indexOf(LOGIN_SESSION_ID + ':') !== 0) return false;
+        const nodeId = agent && agent.dbNodeKey;
+        const rec = nodeId && loginData.nodes[nodeId];
+        if (!rec || !rec.pending || command.sessionid !== loginSessionId(rec.pending.startAt)) return true;
+
+        if (command.type === 'userSessions') {
+            const wanted = runtimeUsers[nodeId] || [];
+            const ids = [];
+            (Array.isArray(command.data) ? command.data : []).forEach(s => {
+                if (!s || s.SessionId == null) return;
+                const state = String(s.State || '').toLowerCase();
+                if (state && state !== 'active' && state !== 'connected') return;
+                const owner = loginUserKey((s.Domain ? s.Domain + '\\' : '') + (s.Username || ''));
+                if (wanted.length && owner && wanted.indexOf(owner) < 0) return;
+                const id = Number(s.SessionId);
+                if (Number.isFinite(id) && ids.indexOf(id) < 0) ids.push(id);
+            });
+            if (ids.length) {
+                runtimeSessionIds[nodeId] = ids;
+                rec.pending.sessionIds = ids.slice();
+                saveLoginSoon();
+            }
+            return true;
+        }
+
+        if (command.type === 'ps') {
+            let processes = null;
+            try { processes = (typeof command.value === 'string') ? JSON.parse(command.value) : command.value; } catch (_) {}
+            if (!processes || typeof processes !== 'object') return true;
+            const wanted = runtimeUsers[nodeId] || [];
+            const candidates = [];
+            Object.keys(processes).forEach(pid => {
+                const p = processes[pid];
+                if (!p || typeof p !== 'object') return;
+                const cmd = String(p.cmd || p.name || '').toLowerCase();
+                if (!(/(^|[\\/])explorer\.exe(?:\s|$)/.test(cmd) || cmd === 'explorer.exe')) return;
+                const owner = loginUserKey(p.user);
+                candidates.push({ pid, owner });
+            });
+            const matching = candidates.filter(p => !p.owner || !wanted.length || wanted.indexOf(p.owner) >= 0);
+            (matching.length ? matching : candidates).forEach(p => {
+                sendAgent(agent, { action: 'msg', type: 'psinfo', pid: p.pid, sessionid: command.sessionid });
+            });
+            return true;
+        }
+
+        if (command.type === 'psinfo' && explorerProcess(command)) {
+            const wanted = runtimeUsers[nodeId] || [];
+            const owner = processInfoUser(command);
+            if (owner && wanted.length && wanted.indexOf(owner) < 0) return true;
+            const v = command.value || {};
+            const processSessionId = Number(v.sessionId != null ? v.sessionId : v.SessionId);
+            const wantedSessions = runtimeSessionIds[nodeId] || [];
+            if (Number.isFinite(processSessionId) && wantedSessions.length && wantedSessions.indexOf(processSessionId) < 0) return true;
+            const rawStart = command.value && (command.value.startTime || command.value.StartTime || command.value.creationDate);
+            const processStart = rawStart ? new Date(rawStart).getTime() : NaN;
+            const attemptStart = Number(rec.pending.startAt);
+            // Une petite tolérance couvre le délai entre la création très rapide
+            // de la session et l'arrivée du coreinfo sur le serveur.
+            if (Number.isFinite(processStart) && processStart >= attemptStart - 30000 && processStart <= Date.now() + 5000) {
+                finishLoginAttempt(nodeId, Math.max(attemptStart, processStart), 'ready');
+            }
+            return true;
+        }
+        return true;
+    }
+
     // Reçoit les changements de session immédiatement depuis MeshAgent.
     obj.hook_processAgentData = function (command, agent) {
         try {
+            if (handleLoginAgentMessage(command, agent)) return;
             if (!command || command.action !== 'coreinfo' || !Array.isArray(command.users)) return;
             const count = uniqueUserCount(command.users);
             if (count == null) return;
-            recordPresence(agent && agent.dbNodeKey, agent && agent.dbMeshKey, count, Date.now());
+            const nodeId = agent && agent.dbNodeKey;
+            const meshId = agent && agent.dbMeshKey;
+            const nextUsers = loginUserKeys(command.users);
+            const previousUsers = nodeId ? runtimeUsers[nodeId] : null;
+            runtimeUsers[nodeId] = nextUsers;
+            if (previousUsers) {
+                const added = nextUsers.some(u => previousUsers.indexOf(u) < 0);
+                const loginRec = loginData.nodes[nodeId];
+                if (loginRec && loginRec.pending && nextUsers.length === 0) {
+                    finishLoginAttempt(nodeId, Date.now(), 'session-ended');
+                } else if (added && nextUsers.length > 0 && isWindowsAgent(agent, command)) {
+                    startLoginAttempt(nodeId, meshId, command.users, agent, Date.now());
+                }
+            } else {
+                const loginRec = nodeId && loginData.nodes[nodeId];
+                if (loginRec && loginRec.pending) pollLogin(nodeId, agent, true);
+            }
+            recordPresence(nodeId, meshId, count, Date.now());
         } catch (_) {}
     };
 
@@ -209,6 +439,9 @@ module.exports.usagectl = function (parent) {
                 (((event.conn != null) && ((Number(event.conn) & 1) === 0)) ||
                  ((event.pwr != null) && Number(event.pwr) === 0))) {
                 recordPresence(event.nodeid, event.meshid, 0, Date.now());
+                finishLoginAttempt(event.nodeid, Date.now(), 'agent-offline');
+                delete runtimeUsers[event.nodeid];
+                delete runtimeSessionIds[event.nodeid];
             } else if (event.action === 'stopped') {
                 const now = Date.now();
                 Object.keys(presence.nodes).forEach(id => {
@@ -216,6 +449,11 @@ module.exports.usagectl = function (parent) {
                     if (rec && Number(rec.events[rec.events.length - 1][1]) > 0) recordPresence(id, rec.meshid, 0, now);
                 });
                 savePresenceNow();
+                saveLoginNow();
+                if (obj.meshServer.__usagectlLoginPollTimer) {
+                    clearInterval(obj.meshServer.__usagectlLoginPollTimer);
+                    obj.meshServer.__usagectlLoginPollTimer = null;
+                }
             }
         } catch (_) {}
     };
@@ -230,6 +468,13 @@ module.exports.usagectl = function (parent) {
             }
             if (typeof obj.meshServer.AddEventDispatch === 'function') obj.meshServer.AddEventDispatch(['*'], obj);
             obj.meshServer.__usagectlPresenceListener = obj;
+
+            // Une seule boucle de surveillance, même après un rechargement à
+            // chaud du plugin. Elle ne sonde que les postes dont la connexion
+            // Windows est encore en cours, sans limite de durée.
+            if (obj.meshServer.__usagectlLoginPollTimer) clearInterval(obj.meshServer.__usagectlLoginPollTimer);
+            obj.meshServer.__usagectlLoginPollTimer = setInterval(pollPendingLogins, LOGIN_POLL_MS);
+            if (typeof obj.meshServer.__usagectlLoginPollTimer.unref === 'function') obj.meshServer.__usagectlLoginPollTimer.unref();
 
             // Fermer d'abord les états éventuellement restés ouverts après un
             // arrêt brutal, puis amorcer TOUS les nœuds. Sans cet amorçage, seuls
@@ -253,7 +498,11 @@ module.exports.usagectl = function (parent) {
                         // Une liste absente ne prouve pas une présence. On part
                         // donc de zéro jusqu'au prochain coreinfo de l'agent.
                         const count = (isOnline && Array.isArray(n.users)) ? uniqueUserCount(n.users) : 0;
+                        if (isOnline && Array.isArray(n.users)) runtimeUsers[n._id] = loginUserKeys(n.users);
                         recordPresence(n._id, n.meshid, count == null ? 0 : count, Date.now());
+                        if (isOnline && loginData.nodes[n._id] && loginData.nodes[n._id].pending) {
+                            pollLogin(n._id, online[n._id], true);
+                        }
                     });
                 });
             }
@@ -819,6 +1068,83 @@ module.exports.usagectl = function (parent) {
         return sendJson(res, 404, { error: 'action inconnue (rolling): ' + action });
     }
 
+    function loginRange(req) {
+        const ws = String(req.query.weekStart || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ws)) {
+            const p = ws.split('-').map(Number);
+            const mon = mondayOf(new Date(p[0], p[1] - 1, p[2]));
+            const end = new Date(mon); end.setDate(end.getDate() + 7);
+            const fri = new Date(mon); fri.setDate(fri.getDate() + 4);
+            return {
+                start: mon.getTime(), end: end.getTime(), weekMode: true,
+                label: 'Lun ' + fmtDM(mon) + ' → Ven ' + fmtDM(fri),
+            };
+        }
+        let days = parseInt(req.query.days || '7', 10);
+        if (![1, 7, 30, 70].includes(days)) days = 7;
+        const end = Date.now();
+        return { start: end - days * 86400000, end, weekMode: false, days, label: days + ' derniers jours' };
+    }
+    function isWindowsNode(n) {
+        const id = n && n.agent && Number(n.agent.id);
+        return !!(n && ((typeof n.osdesc === 'string' && /windows/i.test(n.osdesc)) ||
+            (Number.isFinite(id) && ((id > 0 && id < 5) || (id > 41 && id < 44)))));
+    }
+    function respondLoginTimes(req, res) {
+        const db = obj.meshServer.db;
+        if (!db || typeof db.GetAllType !== 'function') return sendJson(res, 500, { error: 'base MeshCentral indisponible' });
+        const range = loginRange(req);
+        db.GetAllType('mesh', function (e1, meshes) {
+            if (e1) return sendJson(res, 500, { error: e1.message || String(e1) });
+            const meshNames = {};
+            const excluded = new Set();
+            (meshes || []).forEach(m => {
+                if (!m || !m._id) return;
+                meshNames[m._id] = m.name || m._id;
+                if (isExcludedMesh(m.name)) excluded.add(m._id);
+            });
+            db.GetAllType('node', function (e2, nodes) {
+                if (e2) return sendJson(res, 500, { error: e2.message || String(e2) });
+                const now = Date.now();
+                const rows = (nodes || []).filter(n => n && n._id && !excluded.has(n.meshid) && isWindowsNode(n)).map(n => {
+                    const rec = loginData.nodes[n._id];
+                    const events = (rec && Array.isArray(rec.events) ? rec.events : []).filter(e => {
+                        const startAt = Number(e && e[0]);
+                        return startAt >= range.start && startAt < range.end;
+                    });
+                    const completed = events.filter(e => e[3] === 'ready');
+                    const failed = events.filter(e => e[3] !== 'ready');
+                    const durations = completed.map(e => Number(e[2])).filter(Number.isFinite);
+                    const latest = completed.slice().sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+                    const pending = rec && rec.pending && Number(rec.pending.startAt) >= range.start && Number(rec.pending.startAt) < range.end
+                        ? rec.pending : null;
+                    return {
+                        id: n._id,
+                        name: n.name || n._id,
+                        meshid: n.meshid,
+                        mesh: meshNames[n.meshid] || n.meshid || '',
+                        lastMs: latest ? Number(latest[2]) : null,
+                        lastAt: latest ? Number(latest[1]) : null,
+                        avgMs: durations.length ? Math.round(durations.reduce((s, v) => s + v, 0) / durations.length) : null,
+                        maxMs: durations.length ? Math.max.apply(null, durations) : null,
+                        count: durations.length,
+                        failed: failed.length,
+                        pendingStartedAt: pending ? Number(pending.startAt) : null,
+                        pendingMs: pending ? Math.max(0, now - Number(pending.startAt)) : null,
+                    };
+                }).sort((a, b) => {
+                    if (a.pendingStartedAt && !b.pendingStartedAt) return -1;
+                    if (!a.pendingStartedAt && b.pendingStartedAt) return 1;
+                    return (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true });
+                });
+                sendJson(res, 200, {
+                    rows, weekMode: range.weekMode, weekLabel: range.label, days: range.days,
+                    measuredFrom: 'meshagent-session', measuredUntil: 'explorer.exe', timeout: null,
+                });
+            });
+        });
+    }
+
     // ============ Routeur ============
     obj.handleAdminReq = function (req, res, user) {
         try { return _handle(req, res, user); }
@@ -856,6 +1182,8 @@ module.exports.usagectl = function (parent) {
                 metric: 'loggedInSessions',
             });
         }
+
+        if (action === 'loginTimes') return respondLoginTimes(req, res);
 
         if (action === 'invalidate') {
             const wk = String(req.query.weekStart || '').trim();
