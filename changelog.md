@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.40
+
+- Ajout du temps d'ouverture de session Windows dans les rapports PDF, pour les semaines précises comme pour les périodes glissantes.
+- Le rapport reprend l'état actuel, la dernière durée, la moyenne, le maximum, le nombre de mesures et les tentatives non abouties de chaque poste.
+- Le rapport PDF peut désormais être généré directement depuis n'importe quel onglet en mode période glissante.
+
 ## 0.0.39
 
 - Correction de la détection d'Explorer lorsque MeshAgent renvoie le nom de processus `explorer` sans l'extension `.exe`.

@@ -617,21 +617,28 @@
   function buildAndDownloadPdf() {
     var btn = $('pdfBtn'); btn.disabled = true; btn.textContent = '⏳ Préparation…';
     loadHtml2Pdf().then(function () {
-      if (!isWeekMode()) {
-        if (!lastSallesResult) throw new Error('Charge d\'abord la vue Salles.');
-        var html = reportInnerRolling(lastSallesResult);
-        return renderPdf(html, 'usagectl_rolling_' + $('daysSel').value + 'j.pdf');
-      }
       var q = getQuery();
+      if (!isWeekMode()) {
+        btn.textContent = '⏳ Calcul…';
+        return Promise.all([
+          api('salles', q),
+          api('loginTimes', q),
+        ]).then(function (r) {
+          btn.textContent = '⏳ Rendu PDF…';
+          var html = reportInnerRolling(r[0], r[1]);
+          return renderPdf(html, 'usagectl_rolling_' + $('daysSel').value + 'j.pdf');
+        });
+      }
       btn.textContent = '⏳ Calcul…';
       return Promise.all([
         api('salles', q),
         api('heatmap', Object.assign({ meshid: 'all' }, q)),
         api('horsHeures', Object.assign({ meshid: 'all' }, q)),
         api('topPostes', q),
+        api('loginTimes', q),
       ]).then(function (r) {
         btn.textContent = '⏳ Rendu PDF…';
-        var html = reportInnerWeek(r[0], r[1], r[2], r[3]);
+        var html = reportInnerWeek(r[0], r[1], r[2], r[3], r[4]);
         return renderPdf(html, 'usagectl_' + q.weekStart + '.pdf');
       });
     }).catch(function (e) {
@@ -685,6 +692,8 @@
          + 'table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }'
          + 'th, td { padding: 5px 8px; border-bottom: 1px solid #eee; text-align: left; font-size: 10px; }'
          + 'th { background: #f6f8fa; font-weight: 700; color: #444; text-transform: uppercase; font-size: 9px; letter-spacing: 0.3px; }'
+         + 'thead { display: table-header-group; }'
+         + 'tr { page-break-inside: avoid; }'
          + 'tr:nth-child(even) td { background: #fafbfc; }'
          + '.bar { display: inline-block; width: 100px; height: 10px; background: #eee; border-radius: 2px; overflow: hidden; vertical-align: middle; }'
          + '.bar > span { display: block; height: 100%; }'
@@ -705,6 +714,8 @@
          + '.legend { display: flex; align-items: center; gap: 8px; font-size: 9px; color: #666; margin-top: 6px; justify-content: center; }'
          + '.legend .grad { display: inline-block; width: 200px; height: 10px; background: linear-gradient(90deg, rgb(46,204,60), rgb(243,156,60), rgb(217,83,60)); border-radius: 2px; }'
          + '.two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }'
+         + '.login-pending-pdf { color: #d97706; font-weight: 700; }'
+         + '.login-ready-pdf { color: #198754; font-weight: 700; }'
          + '.footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 9px; color: #aaa; text-align: center; border-top: 1px solid #eee; padding-top: 3px; }'
          + '.muted { color: #888; }';
   }
@@ -718,7 +729,7 @@
          + '</span>';
   }
 
-  function reportInnerWeek(salles, heatmap, hors, top) {
+  function reportInnerWeek(salles, heatmap, hors, top, loginTimes) {
     var weekLabel = salles.weekLabel || '';
     var sallesList = salles.salles || [];
     var withDataTotal = sallesList.reduce(function (s, x) { return s + (x.nodesWithData || 0); }, 0);
@@ -832,6 +843,8 @@
       html += '</tbody></table>';
     }
 
+    html += reportLoginTimes(loginTimes);
+
     html += '<div class="footer-note muted" style="margin-top:18px;text-align:center;font-size:9px">usagectl · ' + escapeHtml(weekLabel) + ' · généré le ' + nowLabel + '</div>';
     return html;
   }
@@ -846,7 +859,39 @@
     return h;
   }
 
-  function reportInnerRolling(salles) {
+  function reportLoginTimes(loginTimes) {
+    var rows = (loginTimes && loginTimes.rows) || [];
+    var html = '<div class="page-break"></div>'
+             + '<h2>Temps d’ouverture de session Windows</h2>'
+             + '<div class="muted" style="margin-bottom:10px">Délai entre la détection de la nouvelle session par MeshAgent et le démarrage d’explorer.exe pour le même utilisateur. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
+    if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
+    html += '<table><thead><tr>'
+          + '<th>Poste</th><th>Salle</th><th style="width:92px">État</th>'
+          + '<th style="width:58px">Dernière</th><th style="width:58px">Moyenne</th><th style="width:58px">Maximum</th>'
+          + '<th style="width:48px">Mesures</th><th style="width:58px">Non abouties</th>'
+          + '</tr></thead><tbody>';
+    rows.forEach(function (n) {
+      var state;
+      if (n.pendingStartedAt) {
+        state = '<span class="login-pending-pdf">En cours · ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>';
+      } else if (n.count) {
+        state = '<span class="login-ready-pdf">Mesuré</span>';
+      } else {
+        state = '<span class="muted">En attente</span>';
+      }
+      html += '<tr><td><b>' + escapeHtml(n.name) + '</b></td><td>' + escapeHtml(n.mesh) + '</td>'
+            + '<td>' + state + '</td>'
+            + '<td>' + formatDurationMs(n.lastMs) + '</td>'
+            + '<td>' + formatDurationMs(n.avgMs) + '</td>'
+            + '<td>' + formatDurationMs(n.maxMs) + '</td>'
+            + '<td>' + n.count + '</td><td>' + n.failed + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une tentative non aboutie correspond à une session fermée ou à un agent déconnecté avant le démarrage d’explorer.exe. Aucun nom d’utilisateur n’est conservé.</div>';
+    return html;
+  }
+
+  function reportInnerRolling(salles, loginTimes) {
     var sallesList = salles.salles || [];
     var now = new Date();
     var nowLabel = pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
@@ -868,6 +913,7 @@
     });
     html += '</tbody></table>';
     html += '<div class="muted" style="margin-top:6px;font-size:9px">Durées moyennes par poste sur la période sélectionnée.</div>';
+    html += reportLoginTimes(loginTimes);
     html += '<div class="muted" style="margin-top:18px;text-align:center;font-size:9px">usagectl · ' + nowLabel + '</div>';
     return html;
   }
