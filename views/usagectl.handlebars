@@ -43,6 +43,12 @@
   .login-history-row > td { background: #fafcff !important; padding: 10px 18px 14px 34px; }
   .login-history-row table { background: #fff; margin-top: 6px; }
   .login-history-row th, .login-history-row td { padding: 6px 8px; font-size: 11px; }
+  .login-summary { display: grid; grid-template-columns: minmax(230px, 320px) 1fr; gap: 12px; margin: 10px 0 14px 0; align-items: start; }
+  .login-global { background: #f6f9ff; border: 1px solid #d9e6ff; border-left: 4px solid #0d6efd; border-radius: 4px; padding: 12px 14px; }
+  .login-global .label { color: #567; font-size: 11px; }
+  .login-global .value { color: #0d6efd; font-size: 27px; font-weight: bold; margin: 3px 0; }
+  .login-global .detail { color: #777; font-size: 10px; }
+  .login-room-summary th, .login-room-summary td { padding: 5px 8px; font-size: 11px; }
   .progress { height: 16px; background: #eee; border-radius: 3px; overflow: hidden; margin: 6px 0; }
   .progress > span { display: block; height: 100%; background: #0d6efd; transition: width 0.3s; }
   .metric-note { margin: 0 0 8px 0; padding: 7px 10px; background: #eef6ff; border-left: 3px solid #0d6efd; color: #345; font-size: 11px; }
@@ -557,6 +563,25 @@
     var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
     var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
              + '<div class="metric-note">Le chrono démarre à la dernière saisie Windows précédant la création de la session — généralement l’appui sur <b>Entrée</b> qui valide les identifiants — et s’arrête lorsque le bureau est confirmé disponible : explorer.exe actif, écran de connexion fermé et état stable sur deux contrôles. Si cette saisie n’est pas disponible, l’heure de création de session est utilisée. Il n’y a aucun timeout.</div>';
+    var globalStats = r.globalStats || {};
+    var roomStats = r.roomStats || [];
+    html += '<div class="login-summary"><div class="login-global">'
+          + '<div class="label">Temps moyen global du lycée</div>'
+          + '<div class="value">' + formatDurationMs(globalStats.avgMs) + '</div>'
+          + '<div class="detail">' + (globalStats.count || 0) + ' mesure' + (globalStats.count === 1 ? '' : 's')
+          + ' · ' + (globalStats.devicesWithMeasurements || 0) + '/' + (globalStats.devicesTotal || 0) + ' postes mesurés'
+          + ' · ' + (globalStats.roomsWithMeasurements || 0) + '/' + (globalStats.roomsTotal || 0) + ' salles</div></div>';
+    if (roomStats.length) {
+      html += '<table class="login-room-summary"><thead><tr><th>Salle</th><th>Temps moyen</th><th>Mesures</th><th>Postes mesurés</th></tr></thead><tbody>';
+      roomStats.forEach(function (room) {
+        html += '<tr><td><b>' + escapeHtml(room.name) + '</b></td><td>' + formatDurationMs(room.avgMs) + '</td>'
+              + '<td>' + room.count + '</td><td>' + room.devicesWithMeasurements + ' / ' + room.devicesTotal + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<div class="empty">Aucune salle Windows.</div>';
+    }
+    html += '</div><div style="margin:-8px 0 12px 0;font-size:10px;color:#777">Moyennes calculées sur toutes les connexions réussies de la période : chaque connexion compte une fois.</div>';
     if (!rows.length) {
       html += '<div class="empty">Aucun poste Windows.</div>';
     } else {
@@ -940,10 +965,21 @@
 
   function reportLoginTimes(loginTimes) {
     var rows = (loginTimes && loginTimes.rows) || [];
+    var roomStats = (loginTimes && loginTimes.roomStats) || [];
+    var globalStats = (loginTimes && loginTimes.globalStats) || {};
     var html = '<div class="page-break"></div>'
              + '<h2>Temps d’ouverture de session Windows</h2>'
              + '<div class="muted" style="margin-bottom:10px">Délai entre la dernière saisie Windows précédant la création de session — généralement la validation par Entrée — et la disponibilité confirmée du bureau. Si cette saisie n’est pas disponible, l’heure de création de session est utilisée. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
     if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
+    html += '<h3 style="margin-top:14px">Temps moyen de connexion</h3>'
+          + '<table><thead><tr><th>Périmètre</th><th>Moyenne</th><th>Mesures</th><th>Postes mesurés</th></tr></thead><tbody>'
+          + '<tr><td><b>Lycée — toutes les salles</b></td><td><b>' + formatDurationMs(globalStats.avgMs) + '</b></td>'
+          + '<td>' + (globalStats.count || 0) + '</td><td>' + (globalStats.devicesWithMeasurements || 0) + ' / ' + (globalStats.devicesTotal || 0) + '</td></tr>';
+    roomStats.forEach(function (room) {
+      html += '<tr><td>' + escapeHtml(room.name) + '</td><td>' + formatDurationMs(room.avgMs) + '</td>'
+            + '<td>' + room.count + '</td><td>' + room.devicesWithMeasurements + ' / ' + room.devicesTotal + '</td></tr>';
+    });
+    html += '</tbody></table><div class="muted" style="margin-top:4px;font-size:9px">Chaque connexion réussie de la période compte une fois dans les moyennes.</div>';
     html += '<table><thead><tr>'
           + '<th>Poste</th><th>Salle</th><th style="width:92px">État</th>'
           + '<th style="width:58px">Dernière</th><th style="width:58px">Moyenne</th><th style="width:58px">Maximum</th>'

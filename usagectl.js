@@ -1377,6 +1377,7 @@ module.exports.usagectl = function (parent) {
                     const completed = events.filter(e => e[3] === 'ready');
                     const failed = events.filter(e => e[3] !== 'ready');
                     const durations = completed.map(e => Number(e[2])).filter(Number.isFinite);
+                    const durationTotalMs = durations.reduce((s, v) => s + v, 0);
                     const latest = completed.slice().sort((a, b) => Number(b[1]) - Number(a[1]))[0];
                     const pending = rec && rec.pending && Number(rec.pending.startAt) >= range.start && Number(rec.pending.startAt) < range.end
                         ? rec.pending : null;
@@ -1416,9 +1417,10 @@ module.exports.usagectl = function (parent) {
                         mesh: meshNames[n.meshid] || n.meshid || '',
                         lastMs: latest ? Number(latest[2]) : null,
                         lastAt: latest ? Number(latest[1]) : null,
-                        avgMs: durations.length ? Math.round(durations.reduce((s, v) => s + v, 0) / durations.length) : null,
+                        avgMs: durations.length ? Math.round(durationTotalMs / durations.length) : null,
                         maxMs: durations.length ? Math.max.apply(null, durations) : null,
                         count: durations.length,
+                        durationTotalMs,
                         failed: failed.length,
                         pendingStartedAt: pending ? Number(pending.startAt) : null,
                         pendingMs: pending ? Math.max(0, now - Number(pending.startAt)) : null,
@@ -1432,8 +1434,48 @@ module.exports.usagectl = function (parent) {
                     if (!a.pendingStartedAt && b.pendingStartedAt) return 1;
                     return (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true });
                 });
+                const roomMap = Object.create(null);
+                rows.forEach(row => {
+                    const key = row.meshid || row.mesh || 'sans-salle';
+                    let room = roomMap[key];
+                    if (!room) {
+                        room = roomMap[key] = {
+                            id: key,
+                            name: row.mesh || 'Sans salle',
+                            totalMs: 0,
+                            count: 0,
+                            devicesWithMeasurements: 0,
+                            devicesTotal: 0,
+                        };
+                    }
+                    room.devicesTotal++;
+                    room.totalMs += Number(row.durationTotalMs || 0);
+                    room.count += Number(row.count || 0);
+                    if (row.count > 0) room.devicesWithMeasurements++;
+                });
+                const roomStats = Object.keys(roomMap).map(key => {
+                    const room = roomMap[key];
+                    return {
+                        id: room.id,
+                        name: room.name,
+                        avgMs: room.count ? Math.round(room.totalMs / room.count) : null,
+                        count: room.count,
+                        devicesWithMeasurements: room.devicesWithMeasurements,
+                        devicesTotal: room.devicesTotal,
+                    };
+                }).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
+                const globalTotalMs = rows.reduce((sum, row) => sum + Number(row.durationTotalMs || 0), 0);
+                const globalCount = rows.reduce((sum, row) => sum + Number(row.count || 0), 0);
+                const globalStats = {
+                    avgMs: globalCount ? Math.round(globalTotalMs / globalCount) : null,
+                    count: globalCount,
+                    devicesWithMeasurements: roomStats.reduce((sum, room) => sum + room.devicesWithMeasurements, 0),
+                    devicesTotal: rows.length,
+                    roomsWithMeasurements: roomStats.filter(room => room.count > 0).length,
+                    roomsTotal: roomStats.length,
+                };
                 sendJson(res, 200, {
-                    rows, weekMode: range.weekMode, weekLabel: range.label, days: range.days,
+                    rows, roomStats, globalStats, weekMode: range.weekMode, weekLabel: range.label, days: range.days,
                     measuredFrom: 'windows-last-input-or-interactive-logon', measuredUntil: 'confirmed-desktop', timeout: null,
                 });
             });

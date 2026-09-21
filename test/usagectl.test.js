@@ -208,6 +208,23 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(loginBody.rows[0].history[0].startAt, new Date(2026, 7, 31, 8, 50, 0, 0).getTime());
     assert.equal(loginBody.rows[0].history[0].durationMs, 20 * 60 * 1000);
     assert.equal(loginBody.rows[0].history[0].startReliable, true);
+    assert.deepEqual(loginBody.globalStats, {
+        avgMs: 20 * 60 * 1000,
+        count: 1,
+        devicesWithMeasurements: 1,
+        devicesTotal: 1,
+        roomsWithMeasurements: 1,
+        roomsTotal: 1,
+    });
+    assert.equal(loginBody.roomStats.length, 1);
+    assert.deepEqual(loginBody.roomStats[0], {
+        id: meshId,
+        name: 'Salle A',
+        avgMs: 20 * 60 * 1000,
+        count: 1,
+        devicesWithMeasurements: 1,
+        devicesTotal: 1,
+    });
 
     // Une déconnexion agent clôt une session encore ouverte.
     now = new Date(2026, 7, 31, 13, 0, 0, 0).getTime();

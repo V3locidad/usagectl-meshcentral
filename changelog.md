@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.47
+
+- Ajout du temps moyen global de connexion pour l'ensemble du lycée dans l'onglet « Temps de connexion ».
+- Ajout du temps moyen par salle, avec le nombre de connexions réussies et le nombre de postes effectivement mesurés.
+- Les moyennes sont pondérées par connexion réussie : chaque connexion de la période sélectionnée compte une fois.
+- La synthèse globale et par salle est également incluse dans les rapports PDF.
+
 ## 0.0.46
 
 - Le départ du chronomètre utilise maintenant la dernière saisie Windows précédant la création de session, ce qui correspond normalement à l'appui sur Entrée après le login et le mot de passe.

@@ -32,6 +32,8 @@ L'onglet **Temps de connexion** mesure, pour chaque poste Windows, le délai ent
 
 Le démarrage d'`explorer.exe` ne suffit pas à lui seul : Windows peut lancer ce processus alors que l'écran « Connexion » ou « Bienvenue » est encore visible. Le plugin attend donc aussi la disparition de `LogonUI.exe` et de `userinit.exe`, puis confirme cet état sur deux contrôles successifs espacés d'environ cinq secondes. La fin enregistrée est l'instant de cette confirmation, avec une précision correspondant à cet intervalle de surveillance.
 
+L'onglet affiche aussi le **temps moyen global du lycée** et le **temps moyen de chaque salle**, accompagnés du nombre de connexions réussies et de postes mesurés. Chaque connexion réussie de la période sélectionnée compte une fois dans ces moyennes. La même synthèse est ajoutée aux rapports PDF.
+
 Il n'existe aucune limite de durée : une connexion de 10, 20 minutes ou davantage reste affichée comme « en cours ». Si la session se ferme ou si le poste se déconnecte avant la disponibilité confirmée du bureau, la tentative est conservée comme mesure incomplète avec sa durée. Les mesures en cours sont enregistrées sur disque afin de survivre à un rechargement du plugin.
 
 Selon la version de MeshAgent, le détail du processus peut ne pas contenir son heure de démarrage. Lorsque le processus Explorer appartient bien au même utilisateur ou à la même session Windows, le plugin utilise alors son instant de détection, avec une précision maximale de 5 secondes. L'interface affiche aussi l'étape de détection en cours pour faciliter le diagnostic.
