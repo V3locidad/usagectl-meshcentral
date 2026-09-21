@@ -626,7 +626,7 @@
       });
       html += '</tbody></table>';
     }
-    html += '<div style="margin-top:8px;font-size:11px;color:#777">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Aucun nom d’utilisateur n’est conservé.</div>';
+    html += '<div style="margin-top:8px;font-size:11px;color:#777">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Le compte Windows associé est conservé avec la mesure.</div>';
     $('content').innerHTML = html;
     Array.prototype.forEach.call(document.querySelectorAll('.login-history-btn'), function (button) {
       button.onclick = function () {
@@ -646,7 +646,7 @@
     var history = node.history || [];
     if (!history.length) return '<div style="color:#999">Aucune tentative sur la période sélectionnée.</div>';
     var html = '<div style="font-weight:bold;margin-bottom:5px">Historique — ' + escapeHtml(node.name) + '</div>'
-             + '<table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
+             + '<table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Utilisateur</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
     history.forEach(function (e) {
       var reliable = !!e.startReliable;
       var duration = (e.status === 'start-unavailable' || !reliable) ? '—' : formatDurationMs(e.durationMs);
@@ -655,7 +655,7 @@
       if (failure) result += '<div style="font-size:10px;color:#777;margin-top:2px">' + escapeHtml(failure) + '</div>';
       html += '<tr><td>' + (reliable ? formatDateTimeMs(e.startAt) : '<span style="color:#999">Indisponible</span>') + '</td>'
             + '<td>' + (e.status === 'pending' ? '<span class="login-pending">En cours</span>' : formatDateTimeMs(e.endAt)) + '</td>'
-            + '<td>' + duration + '</td><td>' + result + '</td><td>' + escapeHtml(loginSourceLabel(e.source)) + '</td></tr>';
+            + '<td>' + duration + '</td><td>' + escapeHtml(e.username || '—') + '</td><td>' + result + '</td><td>' + escapeHtml(loginSourceLabel(e.source)) + '</td></tr>';
     });
     html += '</tbody></table>';
     if (node.historyTruncated) html += '<div style="font-size:10px;color:#777">Affichage limité aux 200 tentatives les plus récentes.</div>';
@@ -1004,7 +1004,7 @@
             + '<td>' + n.count + '</td><td>' + n.failed + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Aucun nom d’utilisateur n’est conservé.</div>';
+    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Le compte Windows associé est conservé avec la mesure.</div>';
     var allHistory = [];
     rows.forEach(function (n) {
       (n.history || []).forEach(function (e) {
@@ -1014,7 +1014,7 @@
     allHistory.sort(function (a, b) { return Number(b.event.startAt) - Number(a.event.startAt); });
     if (allHistory.length) {
       html += '<h3 style="margin-top:18px">Historique détaillé</h3>'
-            + '<table><thead><tr><th>Poste</th><th>Salle</th><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
+            + '<table><thead><tr><th>Poste</th><th>Salle</th><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Utilisateur</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
       allHistory.forEach(function (item) {
         var e = item.event;
         var reliable = !!e.startReliable;
@@ -1025,7 +1025,7 @@
         html += '<tr><td><b>' + escapeHtml(item.name) + '</b></td><td>' + escapeHtml(item.mesh) + '</td>'
               + '<td>' + (reliable ? formatDateTimeMs(e.startAt) : 'Indisponible') + '</td>'
               + '<td>' + (e.status === 'pending' ? 'En cours' : formatDateTimeMs(e.endAt)) + '</td>'
-              + '<td>' + duration + '</td><td>' + result + '</td><td>' + escapeHtml(loginSourceLabel(e.source)) + '</td></tr>';
+              + '<td>' + duration + '</td><td>' + escapeHtml(e.username || '—') + '</td><td>' + result + '</td><td>' + escapeHtml(loginSourceLabel(e.source)) + '</td></tr>';
       });
       html += '</tbody></table>';
     }

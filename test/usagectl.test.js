@@ -205,6 +205,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(loginBody.rows[0].historyCount, 1);
     assert.equal(loginBody.rows[0].history[0].status, 'ready');
     assert.equal(loginBody.rows[0].history[0].source, 'windows-wts-input');
+    assert.equal(loginBody.rows[0].history[0].username, 'DOMAINE\\alice');
     assert.equal(loginBody.rows[0].history[0].startAt, new Date(2026, 7, 31, 8, 50, 0, 0).getTime());
     assert.equal(loginBody.rows[0].history[0].durationMs, 20 * 60 * 1000);
     assert.equal(loginBody.rows[0].history[0].startReliable, true);
@@ -238,6 +239,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(pendingBody.rows[0].pendingMs, 20 * 60 * 1000);
     assert.equal(pendingBody.rows[0].pendingStage, 'waiting-logon-time');
     assert.equal(pendingBody.rows[0].history[0].status, 'pending');
+    assert.equal(pendingBody.rows[0].history[0].username, 'bob');
 
     // Certaines versions de MeshAgent confirment explorer.exe sans fournir
     // startTime. On clôt alors à l'instant de détection, après validation de
@@ -343,8 +345,8 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
 
     const loginPath = Object.keys(writes).find(p => p.endsWith('usagectl-logins.json'));
     assert.ok(loginPath);
-    assert.doesNotMatch(writes[loginPath], /alice|bob|charlie|dave|DOMAINE/i);
     const storedLogins = JSON.parse(writes[loginPath]);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'start-unavailable', 'agent-offline']);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-wts-input', 'windows-wts-session', 'meshagent-session', 'meshagent-session']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[6]), ['DOMAINE\\alice', 'bob', 'charlie', 'dave']);
 });

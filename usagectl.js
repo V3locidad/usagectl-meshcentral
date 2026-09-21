@@ -240,8 +240,17 @@ module.exports.usagectl = function (parent) {
         loginSaveTimer = setTimeout(saveLoginNow, LOGIN_SAVE_DELAY_MS);
         if (loginSaveTimer && typeof loginSaveTimer.unref === 'function') loginSaveTimer.unref();
     }
+    function loginUserDisplay(value) {
+        let raw = value;
+        if (value && typeof value === 'object') {
+            const user = value.Username || value.UserName || value.username || value.name || '';
+            const domain = value.Domain || value.domain || '';
+            raw = user && domain && String(user).indexOf('\\') < 0 ? domain + '\\' + user : user;
+        }
+        return String(raw || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().substring(0, 256);
+    }
     function loginUserKey(value) {
-        let s = String(value || '').trim().toLowerCase();
+        let s = loginUserDisplay(value).toLowerCase();
         if (!s) return '';
         const slash = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'));
         if (slash >= 0) s = s.substring(slash + 1);
@@ -254,6 +263,17 @@ module.exports.usagectl = function (parent) {
         (Array.isArray(users) ? users : []).forEach(u => {
             const k = loginUserKey(u);
             if (k && out.indexOf(k) < 0) out.push(k);
+        });
+        return out;
+    }
+    function loginUserDisplays(users, wantedKeys) {
+        const out = [];
+        const wanted = Array.isArray(wantedKeys) ? wantedKeys : null;
+        (Array.isArray(users) ? users : []).forEach(u => {
+            const display = loginUserDisplay(u);
+            const key = loginUserKey(display);
+            if (!display || !key || (wanted && wanted.indexOf(key) < 0)) return;
+            if (!out.some(v => loginUserKey(v) === key)) out.push(display);
         });
         return out;
     }
@@ -433,12 +453,18 @@ module.exports.usagectl = function (parent) {
             if (rec && rec.pending && online[nodeId]) pollLogin(nodeId, online[nodeId], false);
         });
     }
-    function startLoginAttempt(nodeId, meshId, users, agent, atMs) {
+    function startLoginAttempt(nodeId, meshId, users, agent, atMs, userDisplays) {
         if (!nodeId) return;
         const rec = loginNodeRecord(nodeId, meshId);
         if (rec.pending) return;
         const now = Number.isFinite(atMs) ? atMs : Date.now();
-        rec.pending = { attemptId: now, detectedAt: now, startAt: now };
+        const displays = loginUserDisplays(userDisplays, loginUserKeys(users));
+        rec.pending = {
+            attemptId: now,
+            detectedAt: now,
+            startAt: now,
+            username: loginUserDisplay((displays.length ? displays : loginUserDisplays(users)).join(', ')) || null,
+        };
         runtimeUsers[nodeId] = loginUserKeys(users);
         runtimeExplorerCandidates[nodeId] = Object.create(null);
         runtimeLoginState[nodeId] = {};
@@ -452,7 +478,8 @@ module.exports.usagectl = function (parent) {
         const startAt = Number(rec.pending.startAt);
         const endAt = Number.isFinite(readyAt) ? readyAt : Date.now();
         rec.events.push([startAt, endAt, Math.max(0, endAt - startAt), status || 'ready',
-            rec.pending.logonSource || 'meshagent-session', rec.pending.logonFailure || null]);
+            rec.pending.logonSource || 'meshagent-session', rec.pending.logonFailure || null,
+            loginUserDisplay(rec.pending.username) || null]);
         delete rec.pending;
         delete loginPollAt[nodeId];
         delete runtimeSessionIds[nodeId];
@@ -519,12 +546,14 @@ module.exports.usagectl = function (parent) {
                         startAt: inputReliable ? inputAt : eventAt,
                         source: inputReliable ? 'windows-wts-input' : 'windows-wts-session',
                         sessionId: Number(s.SessionId),
+                        username: loginUserDisplay(s),
                     };
                 }
             });
             if (best) {
                 rec.pending.startAt = best.startAt;
                 rec.pending.logonSource = best.source;
+                if (best.username) rec.pending.username = best.username;
                 if (Number.isFinite(best.sessionId)) {
                     runtimeSessionIds[nodeId] = [best.sessionId];
                     rec.pending.sessionIds = [best.sessionId];
@@ -570,6 +599,8 @@ module.exports.usagectl = function (parent) {
                 if (state && state !== 'active' && state !== 'connected') return;
                 const owner = loginUserKey((s.Domain ? s.Domain + '\\' : '') + (s.Username || ''));
                 if (wanted.length && owner && wanted.indexOf(owner) < 0) return;
+                const username = loginUserDisplay(s);
+                if (username) rec.pending.username = username;
                 const id = Number(s.SessionId);
                 if (Number.isFinite(id) && ids.indexOf(id) < 0) ids.push(id);
             });
@@ -674,6 +705,7 @@ module.exports.usagectl = function (parent) {
             const nodeId = agent && agent.dbNodeKey;
             const meshId = agent && agent.dbMeshKey;
             const nextUsers = loginUserKeys(command.users);
+            const nextUserDisplays = loginUserDisplays(command.users);
             const previousUsers = nodeId ? runtimeUsers[nodeId] : null;
             runtimeUsers[nodeId] = nextUsers;
             if (previousUsers) {
@@ -682,7 +714,7 @@ module.exports.usagectl = function (parent) {
                 if (loginRec && loginRec.pending && nextUsers.length === 0) {
                     finishLoginAttempt(nodeId, Date.now(), 'session-ended');
                 } else if (addedUsers.length > 0 && isWindowsAgent(agent, command)) {
-                    startLoginAttempt(nodeId, meshId, addedUsers, agent, Date.now());
+                    startLoginAttempt(nodeId, meshId, addedUsers, agent, Date.now(), nextUserDisplays);
                 }
             } else {
                 const loginRec = nodeId && loginData.nodes[nodeId];
@@ -1388,6 +1420,7 @@ module.exports.usagectl = function (parent) {
                             status: String(e[3] || 'unknown'), source,
                             startReliable: source !== 'meshagent-session',
                             failureReason: e[5] ? String(e[5]) : null,
+                            username: e[6] ? loginUserDisplay(e[6]) : null,
                         };
                     });
                     if (pending) {
@@ -1397,6 +1430,7 @@ module.exports.usagectl = function (parent) {
                             durationMs: Math.max(0, now - Number(pending.startAt)), status: 'pending', source,
                             startReliable: source && source !== 'meshagent-session',
                             failureReason: pending.logonFailure || null,
+                            username: loginUserDisplay(pending.username) || null,
                         });
                     }
                     const pendingState = runtimeLoginState[n._id] || {};

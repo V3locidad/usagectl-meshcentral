@@ -44,7 +44,7 @@ La version 0.0.41 réinitialise les anciennes mesures de temps de connexion, car
 
 Les rapports PDF incluent une section dédiée au temps d'ouverture de session, avec les mêmes mesures que l'onglet, aussi bien pour une semaine précise que pour une période glissante.
 
-Chaque poste dispose d'un bouton **Historique** qui affiche toutes les tentatives de la période sélectionnée : début Windows, apparition du bureau ou fin, durée, résultat, source de mesure et raison d'un éventuel échec. Le même historique détaillé est ajouté aux rapports PDF.
+Chaque poste dispose d'un bouton **Historique** qui affiche toutes les tentatives de la période sélectionnée : début Windows, apparition du bureau ou fin, durée, compte Windows, résultat, source de mesure et raison d'un éventuel échec. Le même historique détaillé est ajouté aux rapports PDF. Les mesures créées avant la version 0.0.48 affichent « — » pour l'utilisateur, car cette information n'était pas encore enregistrée.
 
 ## Important après la mise à jour
 
@@ -71,7 +71,7 @@ La réponse indique la date de début, le nombre de postes suivis et la durée d
 ## Données locales
 
 - `usagectl-presence.json` : historique compact des changements de présence ;
-- `usagectl-logins.json` : durées d'ouverture de session, sans nom d'utilisateur ;
+- `usagectl-logins.json` : durées d'ouverture de session et nom du compte Windows associé ;
 - `usagectl-cache.json` : agrégats hebdomadaires recalculables.
 
 Conservez `usagectl-presence.json` et `usagectl-logins.json` dans vos sauvegardes : contrairement au cache, ils ne peuvent pas être reconstruits à partir de la power timeline.

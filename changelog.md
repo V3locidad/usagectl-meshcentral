@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.48
+
+- Ajout du nom du compte Windows dans l'historique des temps de connexion de chaque poste.
+- Le même utilisateur est affiché dans l'historique détaillé des rapports PDF.
+- Les nouvelles mesures conservent le compte dans `usagectl-logins.json` ; les anciennes affichent « — » sans perdre leur historique.
+
 ## 0.0.47
 
 - Ajout du temps moyen global de connexion pour l'ensemble du lycée dans l'onglet « Temps de connexion ».
