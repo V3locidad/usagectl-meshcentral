@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.49
+
+- L’historique brut d’occupation et de connexion reste conservé 400 jours, et le cache couvre désormais 60 semaines afin de consulter une année complète.
+- Ajout du mode « Dates précises » pour sélectionner librement un début et une fin, avec ou sans limitation aux horaires Lun-Ven 8h-18h.
+- Le sélecteur de semaines affiche maintenant les 53 dernières semaines.
+- Depuis le détail d’une salle, le bouton « Rapport PDF » génère uniquement le rapport de cette salle, y compris ses postes et ses temps de connexion.
+
 ## 0.0.48
 
 - Ajout du nom du compte Windows dans l'historique des temps de connexion de chaque poste.

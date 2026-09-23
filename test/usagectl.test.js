@@ -195,6 +195,19 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(body.salles[0].avgPowerPct, 100);
     assert.equal(body.salles[0].avgPowerMinutes, 240);
 
+    const customResponse = makeResponse();
+    plugin.handleAdminReq({ query: {
+        action: 'salles', from: '2026-08-31', to: '2026-08-31',
+        schoolHours: '1', meshid: meshId,
+    } }, customResponse.res, {});
+    const customBody = JSON.parse((await customResponse.done).body);
+    assert.equal(customResponse.res.statusCode, 200);
+    assert.equal(customBody.customRange, true);
+    assert.equal(customBody.periodLabel, '31/08/2026 → 31/08/2026');
+    assert.equal(customBody.salles.length, 1);
+    assert.equal(customBody.salles[0].meshid, meshId);
+    assert.equal(customBody.salles[0].avgOnPct, 50);
+
     const loginResponse = makeResponse();
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, loginResponse.res, {});
     const loginBody = JSON.parse((await loginResponse.done).body);
@@ -226,6 +239,16 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
         devicesWithMeasurements: 1,
         devicesTotal: 1,
     });
+
+    const customLoginResponse = makeResponse();
+    plugin.handleAdminReq({ query: {
+        action: 'loginTimes', from: '2026-08-31', to: '2026-08-31', meshid: meshId,
+    } }, customLoginResponse.res, {});
+    const customLoginBody = JSON.parse((await customLoginResponse.done).body);
+    assert.equal(customLoginBody.customRange, true);
+    assert.equal(customLoginBody.filteredMeshid, meshId);
+    assert.equal(customLoginBody.rows.length, 1);
+    assert.equal(customLoginBody.globalStats.count, 1);
 
     // Une déconnexion agent clôt une session encore ouverte.
     now = new Date(2026, 7, 31, 13, 0, 0, 0).getTime();

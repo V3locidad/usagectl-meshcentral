@@ -64,13 +64,14 @@
 
 <h2>Occupation réelle <span id="cfgState" class="pill ok">sessions OS</span> <span id="cacheState" class="pill"></span></h2>
 
-<div class="metric-note">Un poste est occupé lorsqu'au moins une session utilisateur est ouverte. Il redevient libre à la déconnexion de l'utilisateur ou dès que le PC s'éteint. Le taux d'allumage reste affiché séparément.</div>
+<div class="metric-note">Un poste est occupé lorsqu'au moins une session utilisateur est ouverte. Il redevient libre à la déconnexion de l'utilisateur ou dès que le PC s'éteint. Le taux d'allumage reste affiché séparément. Les mesures sont conservées 400 jours (un peu plus d’un an).</div>
 
 <div class="bar">
   <span>Mode :</span>
   <select id="modeSel">
     <option value="week" selected>Semaine précise (Lun-Ven 8h-18h)</option>
     <option value="rolling">Période glissante</option>
+    <option value="custom">Dates précises</option>
   </select>
   <span id="weekWrap">
     <span>Semaine :</span>
@@ -84,8 +85,12 @@
       <option value="30">Mois (30 j)</option>
       <option value="70">10 semaines (70 j)</option>
     </select>
-    <label title="Ne compter que Lun-Ven 8h-18h"><input type="checkbox" id="schoolHours" checked> Lun-Ven 8h-18h</label>
   </span>
+  <span id="customWrap" style="display:none">
+    <span>Du :</span> <input type="date" id="customFrom">
+    <span>au :</span> <input type="date" id="customTo">
+  </span>
+  <label id="hoursWrap" style="display:none" title="Ne compter que Lun-Ven 8h-18h"><input type="checkbox" id="schoolHours" checked> Lun-Ven 8h-18h</label>
   <input type="text" id="filterInput" placeholder="🔎 Filtre nom (ex: PC-0023)" style="width: 200px">
   <span style="flex:1"></span>
   <button id="refreshBtn" class="primary">↻ Rafraîchir</button>
@@ -221,7 +226,7 @@
     var dow = today.getDay();
     var mondayCurrent = new Date(today);
     mondayCurrent.setDate(mondayCurrent.getDate() + (dow === 0 ? -6 : 1 - dow));
-    for (var i = 0; i < 10; i++) {
+    for (var i = 0; i < 53; i++) {
       var mon = new Date(mondayCurrent); mon.setDate(mon.getDate() - i * 7);
       var fri = new Date(mon); fri.setDate(fri.getDate() + 4);
       var endOfWeek = new Date(mon); endOfWeek.setDate(endOfWeek.getDate() + 5);
@@ -252,12 +257,14 @@
 
   function getQuery() {
     if ($('modeSel').value === 'week') return { weekStart: $('weekSel').value };
+    if ($('modeSel').value === 'custom') return { from: $('customFrom').value, to: $('customTo').value, schoolHours: $('schoolHours').checked ? '1' : '0' };
     return { days: $('daysSel').value, schoolHours: $('schoolHours').checked ? '1' : '0' };
   }
   function isWeekMode() { return $('modeSel').value === 'week'; }
   function modeLabelText(r) {
     if (r && r.weekMode) return ' (Lun-Ven 8h-18h — ' + escapeHtml(r.weekLabel || '') + ')';
-    return $('schoolHours').checked ? ' (Lun-Ven 8h-18h)' : ' (24/7)';
+    var period = r && r.periodLabel ? ' — ' + escapeHtml(r.periodLabel) : '';
+    return ($('schoolHours').checked ? ' (Lun-Ven 8h-18h' : ' (24/7') + period + ')';
   }
   function applyFilter(rows, getName) {
     var f = $('filterInput').value.trim().toLowerCase();
@@ -392,7 +399,7 @@
     var nodes = applyFilter(r.nodes || [], function (n) { return n.name; });
     var html = '<div class="hdr">'
              + '<button class="back" id="backBtn">← Retour</button>'
-             + '<h3>Postes (' + nodes.length + ') — ' + escapeHtml(r.weekLabel || '') + '</h3>'
+             + '<h3>Postes (' + nodes.length + ') — ' + escapeHtml(r.weekLabel || r.periodLabel || '') + '</h3>'
              + '</div>';
     if (!nodes.length) html += '<div class="empty">Aucun poste.</div>';
     else {
@@ -685,13 +692,27 @@
     var m = $('modeSel').value;
     $('weekWrap').style.display = (m === 'week') ? '' : 'none';
     $('rollingWrap').style.display = (m === 'rolling') ? '' : 'none';
+    $('customWrap').style.display = (m === 'custom') ? '' : 'none';
+    $('hoursWrap').style.display = (m === 'week') ? 'none' : '';
   }
+  function initCustomDates() {
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var from = new Date(today); from.setDate(from.getDate() - 6);
+    var min = new Date(today); min.setDate(min.getDate() - 365);
+    $('customFrom').value = fmtIsoDate(from);
+    $('customTo').value = fmtIsoDate(today);
+    $('customFrom').min = fmtIsoDate(min); $('customFrom').max = fmtIsoDate(today);
+    $('customTo').min = fmtIsoDate(min); $('customTo').max = fmtIsoDate(today);
+  }
+  initCustomDates();
   updateModeUi();
   $('modeSel').onchange = function () { updateModeUi(); loadCurrentTab(false); };
   $('weekSel').onchange = function () { loadCurrentTab(false); };
   $('refreshBtn').onclick = function () { loadCurrentTab(false); };
   $('forceBtn').onclick = function () { loadCurrentTab(true); };
   $('daysSel').onchange = function () { loadCurrentTab(false); };
+  $('customFrom').onchange = function () { loadCurrentTab(false); };
+  $('customTo').onchange = function () { loadCurrentTab(false); };
   $('schoolHours').onchange = function () { loadCurrentTab(false); };
   $('filterInput').oninput = function () {
     if (currentTab === 'salles') { inDetail ? renderSalleDetail() : renderSalles(); }
@@ -720,6 +741,13 @@
     var btn = $('pdfBtn'); btn.disabled = true; btn.textContent = '⏳ Préparation…';
     loadHtml2Pdf().then(function () {
       var q = getQuery();
+      var roomOnly = currentTab === 'salles' && inDetail && detailMeshid;
+      var roomName = '';
+      if (roomOnly) {
+        q.meshid = detailMeshid;
+        var room = lastSallesResult && (lastSallesResult.salles || []).filter(function (s) { return s.meshid === detailMeshid; })[0];
+        roomName = room ? room.name : detailMeshid;
+      }
       if (!isWeekMode()) {
         btn.textContent = '⏳ Calcul…';
         return Promise.all([
@@ -728,26 +756,31 @@
         ]).then(function (r) {
           btn.textContent = '⏳ Rendu PDF…';
           var html = reportInnerRolling(r[0], r[1]);
-          return renderPdf(html, 'usagectl_rolling_' + $('daysSel').value + 'j.pdf');
+          var periodFile = $('modeSel').value === 'custom' ? (q.from + '_' + q.to) : ('rolling_' + $('daysSel').value + 'j');
+          return renderPdf(html, 'usagectl_' + (roomOnly ? safeFilename(roomName) + '_' : '') + periodFile + '.pdf');
         });
       }
       btn.textContent = '⏳ Calcul…';
       return Promise.all([
         api('salles', q),
-        api('heatmap', Object.assign({ meshid: 'all' }, q)),
-        api('horsHeures', Object.assign({ meshid: 'all' }, q)),
+        api('heatmap', Object.assign({ meshid: roomOnly ? detailMeshid : 'all' }, q)),
+        api('horsHeures', Object.assign({ meshid: roomOnly ? detailMeshid : 'all' }, q)),
         api('topPostes', q),
         api('loginTimes', q),
       ]).then(function (r) {
         btn.textContent = '⏳ Rendu PDF…';
         var html = reportInnerWeek(r[0], r[1], r[2], r[3], r[4]);
-        return renderPdf(html, 'usagectl_' + q.weekStart + '.pdf');
+        return renderPdf(html, 'usagectl_' + (roomOnly ? safeFilename(roomName) + '_' : '') + q.weekStart + '.pdf');
       });
     }).catch(function (e) {
       alert('Erreur génération PDF: ' + e.message);
     }).then(function () {
       btn.disabled = false; btn.textContent = '📄 Rapport PDF';
     });
+  }
+
+  function safeFilename(value) {
+    return String(value || 'salle').replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '');
   }
 
   function renderPdf(innerHtml, filename) {
@@ -836,6 +869,8 @@
   function reportInnerWeek(salles, heatmap, hors, top, loginTimes) {
     var weekLabel = salles.weekLabel || '';
     var sallesList = salles.salles || [];
+    var roomOnly = sallesList.length === 1 && loginTimes && loginTimes.filteredMeshid;
+    var scopeLabel = roomOnly ? 'Salle ' + sallesList[0].name : 'Toutes les salles';
     var withDataTotal = sallesList.reduce(function (s, x) { return s + (x.nodesWithData || 0); }, 0);
     var nodesTotal = sallesList.reduce(function (s, x) { return s + (x.nodes || 0); }, 0);
     var avgGlobal = 0;
@@ -860,8 +895,8 @@
     // Cover
     html += '<div class="cover">'
           + '<h1>Occupation réelle des postes</h1>'
-          + '<div class="sub">' + escapeHtml(weekLabel) + ' — Lun-Ven 8h-18h · présence mesurée par sessions OS ouvertes</div>'
-          + '<div class="meta">Rapport généré le ' + nowLabel + ' · ' + sallesList.length + ' salles · ' + nodesTotal + ' postes</div>'
+          + '<div class="sub">' + escapeHtml(scopeLabel) + ' — ' + escapeHtml(weekLabel) + ' — Lun-Ven 8h-18h · présence mesurée par sessions OS ouvertes</div>'
+          + '<div class="meta">Rapport généré le ' + nowLabel + ' · ' + sallesList.length + ' salle' + (sallesList.length > 1 ? 's' : '') + ' · ' + nodesTotal + ' postes</div>'
           + '</div>';
 
     // KPIs
@@ -971,9 +1006,10 @@
              + '<h2>Temps d’ouverture de session Windows</h2>'
              + '<div class="muted" style="margin-bottom:10px">Délai entre la dernière saisie Windows précédant la création de session — généralement la validation par Entrée — et la disponibilité confirmée du bureau. Si cette saisie n’est pas disponible, l’heure de création de session est utilisée. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
     if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
+    var scopeLabel = loginTimes && loginTimes.filteredMeshid && roomStats.length ? roomStats[0].name : 'Lycée — toutes les salles';
     html += '<h3 style="margin-top:14px">Temps moyen de connexion</h3>'
           + '<table><thead><tr><th>Périmètre</th><th>Moyenne</th><th>Mesures</th><th>Postes mesurés</th></tr></thead><tbody>'
-          + '<tr><td><b>Lycée — toutes les salles</b></td><td><b>' + formatDurationMs(globalStats.avgMs) + '</b></td>'
+          + '<tr><td><b>' + escapeHtml(scopeLabel) + '</b></td><td><b>' + formatDurationMs(globalStats.avgMs) + '</b></td>'
           + '<td>' + (globalStats.count || 0) + '</td><td>' + (globalStats.devicesWithMeasurements || 0) + ' / ' + (globalStats.devicesTotal || 0) + '</td></tr>';
     roomStats.forEach(function (room) {
       html += '<tr><td>' + escapeHtml(room.name) + '</td><td>' + formatDurationMs(room.avgMs) + '</td>'
@@ -1036,10 +1072,11 @@
     var sallesList = salles.salles || [];
     var now = new Date();
     var nowLabel = pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
-    var periodLabel = salles.days === 1 ? '24 dernières heures' : (salles.days + ' derniers jours');
+    var periodLabel = salles.periodLabel || (salles.days === 1 ? '24 dernières heures' : (salles.days + ' derniers jours'));
+    var scopeLabel = sallesList.length === 1 ? 'Salle ' + sallesList[0].name : 'Toutes les salles';
     var html = '';
     html += '<div class="cover"><h1>Occupation réelle des postes</h1>'
-          + '<div class="sub">Période glissante — ' + periodLabel + ' · sessions OS ouvertes</div>'
+          + '<div class="sub">' + escapeHtml(scopeLabel) + ' — ' + escapeHtml(periodLabel) + ' · sessions OS ouvertes</div>'
           + '<div class="meta">Rapport généré le ' + nowLabel + '</div></div>';
     html += '<h2>Détail par salle</h2><table><thead><tr><th>Salle</th><th>Postes</th><th>Occupation</th><th>%</th><th>Allumé %</th><th>Utilisé</th><th>Allumé</th><th>Période</th></tr></thead><tbody>';
     sallesList.forEach(function (s) {

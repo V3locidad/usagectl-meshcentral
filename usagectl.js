@@ -37,7 +37,11 @@ const LOGIN_LOOKUP_MAX_ATTEMPTS = 2;
 const LOGIN_HISTORY_MAX_PER_NODE = 200;
 const LOGIN_SESSION_ID = 'usagectl-login-monitor';
 const CACHE_TTL_LIVE_MS = 5 * 60 * 1000;
-const CACHE_MAX_WEEKS = 20;
+// Les mesures brutes sont conservées 400 jours. Garder aussi suffisamment
+// d'agrégats hebdomadaires pour consulter une année complète sans les
+// recalculer à chaque affichage.
+const CACHE_MAX_WEEKS = 60;
+const CUSTOM_RANGE_MAX_DAYS = 366;
 const CONCURRENCY = 6;
 const NODE_TIMEOUT_MS = 8000;
 
@@ -55,6 +59,7 @@ function sendJson(res, code, body) {
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
 function fmtIso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
 function fmtDM(d) { return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); }
+function fmtDMY(d) { return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear(); }
 function mondayOf(d) {
     const r = new Date(d);
     r.setHours(0, 0, 0, 0);
@@ -1111,7 +1116,8 @@ module.exports.usagectl = function (parent) {
         const lbl = weekLabel(data);
 
         if (action === 'salles') {
-            const salles = sallesFromWeek(data);
+            const requestedMeshId = String(req.query.meshid || '').trim();
+            const salles = sallesFromWeek(data).filter(s => !requestedMeshId || s.meshid === requestedMeshId);
             // Delta vs semaine précédente si déjà en cache (lecture seule)
             const prevKey = prevWeekKey(data.weekKey);
             const prev = cache.weeks[prevKey];
@@ -1225,7 +1231,9 @@ module.exports.usagectl = function (parent) {
 
         if (action === 'topPostes') {
             const all = [];
+            const requestedMeshId = String(req.query.meshid || '').trim();
             Object.keys(data.nodesByMesh).forEach(k => {
+                if (requestedMeshId && k !== requestedMeshId) return;
                 data.nodesByMesh[k].forEach(n => {
                     const observed = sumArr(n.observedBuckets || []);
                     if (!observed) return;
@@ -1250,14 +1258,56 @@ module.exports.usagectl = function (parent) {
         return sendJson(res, 404, { error: 'action inconnue: ' + action });
     }
 
-    // ============ Rolling mode (sans cache) ============
-    function rollingHandler(action, req, res) {
-        const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 7));
+    function parseLocalDateOnly(value) {
+        const text = String(value || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+        const p = text.split('-').map(Number);
+        const date = new Date(p[0], p[1] - 1, p[2]);
+        if (date.getFullYear() !== p[0] || date.getMonth() !== p[1] - 1 || date.getDate() !== p[2]) return null;
+        date.setHours(0, 0, 0, 0);
+        return date;
+    }
+
+    function requestedPeriod(req) {
+        const fromText = String(req.query.from || '').trim();
+        const toText = String(req.query.to || '').trim();
         const now = Date.now();
-        const start = now - days * 86400000;
+        if (fromText || toText) {
+            const from = parseLocalDateOnly(fromText);
+            const to = parseLocalDateOnly(toText);
+            if (!from || !to) throw new Error('Les dates de début et de fin sont requises au format AAAA-MM-JJ.');
+            const inclusiveDays = Math.round((Date.UTC(to.getFullYear(), to.getMonth(), to.getDate()) - Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())) / 86400000) + 1;
+            if (inclusiveDays < 1) throw new Error('La date de fin doit être postérieure ou égale à la date de début.');
+            if (inclusiveDays > CUSTOM_RANGE_MAX_DAYS) throw new Error('La période personnalisée est limitée à ' + CUSTOM_RANGE_MAX_DAYS + ' jours.');
+            const endExclusive = new Date(to); endExclusive.setDate(endExclusive.getDate() + 1);
+            const end = Math.min(endExclusive.getTime(), now);
+            if (from.getTime() >= end) throw new Error('La période sélectionnée ne contient encore aucune heure écoulée.');
+            return {
+                start: from.getTime(), end,
+                days: inclusiveDays, customRange: true,
+                label: fmtDMY(from) + ' → ' + fmtDMY(to),
+            };
+        }
+        const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 7));
+        return {
+            start: now - days * 86400000, end: now,
+            days, customRange: false,
+            label: days === 1 ? '24 dernières heures' : days + ' derniers jours',
+        };
+    }
+
+    // ============ Période glissante ou dates précises (sans cache) ============
+    function rollingHandler(action, req, res) {
+        let period;
+        try { period = requestedPeriod(req); }
+        catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const start = period.start;
+        const end = period.end;
+        const days = period.days;
         const schoolHours = req.query.schoolHours !== '0';
-        const windows = schoolHours ? buildSchoolWindowsRange(start, now) : null;
-        const totalMs = schoolHours ? totalMsW(windows) : (now - start);
+        const windows = schoolHours ? buildSchoolWindowsRange(start, end) : null;
+        const totalMs = schoolHours ? totalMsW(windows) : (end - start);
+        const totalDivisor = totalMs || 1;
 
         const db = obj.meshServer.db;
         if (action === 'salles') {
@@ -1273,7 +1323,8 @@ module.exports.usagectl = function (parent) {
                 });
                 db.GetAllType('node', function (e2, nodes) {
                     if (e2) return sendJson(res, 500, { error: e2.message });
-                    const allNodes = (nodes || []).filter(n => n && n._id && n.meshid && !excludedIds.has(n.meshid));
+                    const requestedMeshId = String(req.query.meshid || '').trim();
+                    const allNodes = (nodes || []).filter(n => n && n._id && n.meshid && !excludedIds.has(n.meshid) && (!requestedMeshId || n.meshid === requestedMeshId));
                     currentJob = { kind: 'rolling', processed: 0, total: allNodes.length, startedAt: Date.now() };
                     const agg = {};
                     runPool(allNodes, CONCURRENCY, function (n, _i, doneOne) {
@@ -1286,9 +1337,9 @@ module.exports.usagectl = function (parent) {
                             const events = ev || [];
                             if (events.length) {
                                 agg[n.meshid].withPowerData++;
-                                try { agg[n.meshid].totalPowerOn += computeOnInWindows(events, start, now, windows); } catch (_) {}
+                                try { agg[n.meshid].totalPowerOn += computeOnInWindows(events, start, end, windows); } catch (_) {}
                             }
-                            const p = presenceInWindows(n._id, start, now, windows);
+                            const p = presenceInWindows(n._id, start, end, windows);
                             if (p.hasData) {
                                 agg[n.meshid].withData++;
                                 agg[n.meshid].totalOccupied += p.occupiedMs;
@@ -1310,12 +1361,14 @@ module.exports.usagectl = function (parent) {
                                 avgOnPct: a.totalObserved ? Math.round((a.totalOccupied / a.totalObserved * 100) * 10) / 10 : 0,
                                 avgOnMinutes: Math.round(avgOccupied / 60000),
                                 avgObservedMinutes: a.withData ? Math.round((a.totalObserved / a.withData) / 60000) : null,
-                                avgPowerPct: a.withPowerData ? Math.round((avgPower / totalMs * 100) * 10) / 10 : null,
+                                avgPowerPct: a.withPowerData ? Math.round((avgPower / totalDivisor * 100) * 10) / 10 : null,
                                 avgPowerMinutes: a.withPowerData ? Math.round(avgPower / 60000) : null,
                             };
                         }).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
                         sendJson(res, 200, {
                             salles, days, totalMinutes: Math.round(totalMs / 60000), weekMode: false,
+                            customRange: period.customRange, periodLabel: period.label,
+                            rangeStart: start, rangeEnd: end, schoolHours,
                             presenceSince: presenceSinceMs(), metric: 'loggedInSessions',
                         });
                     });
@@ -1334,15 +1387,15 @@ module.exports.usagectl = function (parent) {
                     getPowerTimeline(n._id, start, function (_e, ev) {
                         const events = ev || [];
                         const hasPowerData = events.length > 0;
-                        const powerOn = hasPowerData ? computeOnInWindows(events, start, now, windows) : 0;
-                        const p = presenceInWindows(n._id, start, now, windows);
+                        const powerOn = hasPowerData ? computeOnInWindows(events, start, end, windows) : 0;
+                        const p = presenceInWindows(n._id, start, end, windows);
                         out.push({
                             id: n._id, name: n.name || n._id, os: n.osdesc || '',
                             hasData: p.hasData,
                             onPct: p.hasData ? Math.round((p.occupiedMs / p.coverageMs * 100) * 10) / 10 : null,
                             onMinutes: p.hasData ? Math.round(p.occupiedMs / 60000) : null,
                             observedMinutes: p.hasData ? Math.round(p.coverageMs / 60000) : null,
-                            powerPct: hasPowerData ? Math.round((powerOn / totalMs * 100) * 10) / 10 : null,
+                            powerPct: hasPowerData ? Math.round((powerOn / totalDivisor * 100) * 10) / 10 : null,
                             powerMinutes: hasPowerData ? Math.round(powerOn / 60000) : null,
                         });
                         if (currentJob) currentJob.processed++;
@@ -1353,6 +1406,8 @@ module.exports.usagectl = function (parent) {
                     out.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true }));
                     sendJson(res, 200, {
                         meshid, nodes: out, days, totalMinutes: Math.round(totalMs / 60000), weekMode: false,
+                        customRange: period.customRange, periodLabel: period.label,
+                        rangeStart: start, rangeEnd: end, schoolHours,
                         presenceSince: presenceSinceMs(), metric: 'loggedInSessions',
                     });
                 });
@@ -1363,6 +1418,13 @@ module.exports.usagectl = function (parent) {
     }
 
     function loginRange(req) {
+        if (String(req.query.from || '').trim() || String(req.query.to || '').trim()) {
+            const period = requestedPeriod(req);
+            return {
+                start: period.start, end: period.end, weekMode: false,
+                customRange: true, days: period.days, label: period.label,
+            };
+        }
         const ws = String(req.query.weekStart || '').trim();
         if (/^\d{4}-\d{2}-\d{2}$/.test(ws)) {
             const p = ws.split('-').map(Number);
@@ -1387,7 +1449,10 @@ module.exports.usagectl = function (parent) {
     function respondLoginTimes(req, res) {
         const db = obj.meshServer.db;
         if (!db || typeof db.GetAllType !== 'function') return sendJson(res, 500, { error: 'base MeshCentral indisponible' });
-        const range = loginRange(req);
+        let range;
+        try { range = loginRange(req); }
+        catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const requestedMeshId = String(req.query.meshid || '').trim();
         db.GetAllType('mesh', function (e1, meshes) {
             if (e1) return sendJson(res, 500, { error: e1.message || String(e1) });
             const meshNames = {};
@@ -1400,7 +1465,7 @@ module.exports.usagectl = function (parent) {
             db.GetAllType('node', function (e2, nodes) {
                 if (e2) return sendJson(res, 500, { error: e2.message || String(e2) });
                 const now = Date.now();
-                const rows = (nodes || []).filter(n => n && n._id && !excluded.has(n.meshid) && isWindowsNode(n)).map(n => {
+                const rows = (nodes || []).filter(n => n && n._id && !excluded.has(n.meshid) && isWindowsNode(n) && (!requestedMeshId || n.meshid === requestedMeshId)).map(n => {
                     const rec = loginData.nodes[n._id];
                     const events = (rec && Array.isArray(rec.events) ? rec.events : []).filter(e => {
                         const startAt = Number(e && e[0]);
@@ -1510,6 +1575,8 @@ module.exports.usagectl = function (parent) {
                 };
                 sendJson(res, 200, {
                     rows, roomStats, globalStats, weekMode: range.weekMode, weekLabel: range.label, days: range.days,
+                    customRange: !!range.customRange, periodLabel: range.label,
+                    filteredMeshid: requestedMeshId || null,
                     measuredFrom: 'windows-last-input-or-interactive-logon', measuredUntil: 'confirmed-desktop', timeout: null,
                 });
             });
