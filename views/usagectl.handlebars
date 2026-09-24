@@ -162,12 +162,14 @@
     if (reason === 'timeout') return 'lecture Windows expirée';
     if (reason === 'command-error') return 'commande Windows en erreur';
     if (reason === 'not-found') return 'aucune session correspondante trouvée';
+    if (reason === 'clock-skew') return 'horloges du poste et du serveur désynchronisées';
     return reason ? reason : '';
   }
   function loginStatusHtml(status) {
     if (status === 'pending') return '<span class="login-pending">⏳ En cours</span>';
     if (status === 'ready') return '<span class="login-ready">✓ Réussie</span>';
     if (status === 'start-unavailable') return '<span class="login-failed">⚠ Bureau détecté — mesure incomplète</span>';
+    if (status === 'clock-skew') return '<span class="login-failed">⚠ Mesure invalide — horloges désynchronisées</span>';
     if (status === 'session-ended') return '<span class="login-failed">✕ Session fermée avant le bureau</span>';
     if (status === 'agent-offline') return '<span class="login-failed">✕ PC ou agent déconnecté</span>';
     return '<span class="login-failed">✕ Mesure interrompue</span>';
@@ -656,7 +658,7 @@
              + '<table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Utilisateur</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
     history.forEach(function (e) {
       var reliable = !!e.startReliable;
-      var duration = (e.status === 'start-unavailable' || !reliable) ? '—' : formatDurationMs(e.durationMs);
+      var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable) ? '—' : formatDurationMs(e.durationMs);
       var result = loginStatusHtml(e.status);
       var failure = loginFailureLabel(e.failureReason);
       if (failure) result += '<div style="font-size:10px;color:#777;margin-top:2px">' + escapeHtml(failure) + '</div>';
@@ -1054,7 +1056,7 @@
       allHistory.forEach(function (item) {
         var e = item.event;
         var reliable = !!e.startReliable;
-        var duration = (e.status === 'start-unavailable' || !reliable) ? '—' : formatDurationMs(e.durationMs);
+        var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable) ? '—' : formatDurationMs(e.durationMs);
         var result = loginStatusHtml(e.status);
         var failure = loginFailureLabel(e.failureReason);
         if (failure) result += '<div style="font-size:8px;color:#777">' + escapeHtml(failure) + '</div>';

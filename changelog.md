@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.50
+
+- Correction des durées à `0s` lorsque l’horloge du poste Windows avance ou retarde de quelques secondes par rapport au serveur MeshCentral.
+- Le plugin lit maintenant `CurrentTime` dans WTS et recale `LogonTime` ainsi que `LastInputTime` sur l’horloge du serveur avant de calculer la durée.
+- Les anciennes mesures impossibles dont la fin précède le début sont retirées des moyennes et signalées comme « mesure invalide — horloges désynchronisées » au lieu d’afficher une réussite à `0s`.
+
 ## 0.0.49
 
 - L’historique brut d’occupation et de connexion reste conservé 400 jours, et le cache couvre désormais 60 semaines afin de consulter une année complète.

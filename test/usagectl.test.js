@@ -108,16 +108,20 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.match(aliceLookup.value, /WTSSessionInfo/);
     assert.match(aliceLookup.value, /getRawSessionAttribute/);
     assert.match(aliceLookup.value, /LastInputTime/);
+    assert.match(aliceLookup.value, /CurrentTime/);
     assert.doesNotMatch(aliceLookup.value, /alice|DOMAINE/i);
 
     // MeshAgent n'annonce l'utilisateur qu'à 09:00. WTS indique une création
     // de session à 08:50:11, mais la dernière saisie — l'appui sur Entrée — a
     // eu lieu 11 secondes plus tôt et devient le vrai départ du chrono.
+    // Le poste avance de trois secondes par rapport au serveur. CurrentTime
+    // permet de recaler LogonTime et LastInputTime sur l'horloge serveur.
     plugin.hook_processAgentData({
         action: 'msg', type: 'console', sessionid: aliceLookup.sessionid,
         value: JSON.stringify([{ Domain: 'DOMAINE', Username: 'alice', SessionId: 4,
-            LogonTime: new Date(2026, 7, 31, 8, 50, 11, 0).getTime(),
-            LastInputTime: new Date(2026, 7, 31, 8, 50, 0, 0).getTime() }]),
+            LogonTime: new Date(2026, 7, 31, 8, 50, 14, 0).getTime(),
+            LastInputTime: new Date(2026, 7, 31, 8, 50, 3, 0).getTime(),
+            CurrentTime: new Date(2026, 7, 31, 9, 0, 3, 0).getTime() }]),
     }, agent);
     assert.equal(sent[sent.length - 1].type, 'ps');
     assert.equal(sent.filter(m => m.action === 'runcommands').length, 0);

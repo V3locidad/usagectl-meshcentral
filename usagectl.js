@@ -223,12 +223,30 @@ module.exports.usagectl = function (parent) {
     const runtimeExplorerCandidates = Object.create(null);
     const runtimeLoginState = Object.create(null);
     const loginPollAt = Object.create(null);
+    let loginDataRepaired = false;
     try {
         if (fs.existsSync(LOGIN_FILE)) {
             const j = JSON.parse(fs.readFileSync(LOGIN_FILE, 'utf8'));
             if (j && j.version === LOGIN_VERSION && j.nodes && typeof j.nodes === 'object') loginData = j;
         }
     } catch (_) {}
+
+    // Les anciennes versions pouvaient mélanger l'horloge du poste Windows
+    // (début WTS) avec celle du serveur (bureau prêt). Si le poste avançait de
+    // quelques secondes, la fin se retrouvait avant le début et la durée était
+    // artificiellement ramenée à 0. Ces mesures impossibles ne doivent pas
+    // participer aux moyennes.
+    Object.keys(loginData.nodes).forEach(nodeId => {
+        const rec = loginData.nodes[nodeId];
+        (rec && Array.isArray(rec.events) ? rec.events : []).forEach(event => {
+            if (event && event[3] === 'ready' && Number(event[1]) < Number(event[0])) {
+                event[2] = null;
+                event[3] = 'clock-skew';
+                event[5] = 'clock-skew';
+                loginDataRepaired = true;
+            }
+        });
+    });
 
     function saveLoginNow() {
         if (loginSaveTimer) { clearTimeout(loginSaveTimer); loginSaveTimer = null; }
@@ -245,6 +263,7 @@ module.exports.usagectl = function (parent) {
         loginSaveTimer = setTimeout(saveLoginNow, LOGIN_SAVE_DELAY_MS);
         if (loginSaveTimer && typeof loginSaveTimer.unref === 'function') loginSaveTimer.unref();
     }
+    if (loginDataRepaired) saveLoginSoon();
     function loginUserDisplay(value) {
         let raw = value;
         if (value && typeof value === 'object') {
@@ -348,6 +367,7 @@ module.exports.usagectl = function (parent) {
             "    $key = Get-UsagectlUserKey ([string]$values['TargetUserName'])",
             '    if ($wanted -contains $key) {',
             "      Write-Output ('USAGECTL_LOGON_EVENT=' + $event.TimeCreated.ToUniversalTime().ToString('o'))",
+            "      Write-Output ('USAGECTL_CURRENT=' + (Get-Date).ToUniversalTime().ToString('o'))",
             '      exit 0',
             '    }',
             '  }',
@@ -363,6 +383,7 @@ module.exports.usagectl = function (parent) {
             '  } | Sort-Object StartTime -Descending | Select-Object -First 1',
             '  if ($null -ne $session) {',
             "    Write-Output ('USAGECTL_LOGON_CIM=' + ([datetime]$session.StartTime).ToUniversalTime().ToString('o'))",
+            "    Write-Output ('USAGECTL_CURRENT=' + (Get-Date).ToUniversalTime().ToString('o'))",
             '    exit 0',
             '  }',
             '} catch { $cimError = $true }',
@@ -375,7 +396,7 @@ module.exports.usagectl = function (parent) {
         // relativement à la fin évite de dépendre de l'alignement 32/64 bits.
         // Cette interrogation s'exécute directement dans MeshAgent : aucun
         // PowerShell ni processus externe ne peut la bloquer.
-        const code = "(function(){var u=require('user-sessions'),s=require('kvm-helper').users(),o=[];for(var k in s){var x=s[k];if(!x||x.SessionId==null||!x.Username)continue;try{var b=u.getRawSessionAttribute(x.SessionId,u.InfoClass.WTSSessionInfo);if(b&&b.length>=40){var p=b.length-16,lo=b.readUInt32LE(p),hi=b.readUInt32LE(p+4),ms=Math.floor((hi*4294967296+lo)/10000-11644473600000),ip=b.length-24,ilo=b.readUInt32LE(ip),ihi=b.readUInt32LE(ip+4),ims=Math.floor((ihi*4294967296+ilo)/10000-11644473600000);o.push({SessionId:x.SessionId,Username:x.Username,Domain:x.Domain||'',LogonTime:ms,LastInputTime:ims});}}catch(e){}}return o;})()";
+        const code = "(function(){var u=require('user-sessions'),s=require('kvm-helper').users(),o=[];for(var k in s){var x=s[k];if(!x||x.SessionId==null||!x.Username)continue;try{var b=u.getRawSessionAttribute(x.SessionId,u.InfoClass.WTSSessionInfo);if(b&&b.length>=40){var p=b.length-16,lo=b.readUInt32LE(p),hi=b.readUInt32LE(p+4),ms=Math.floor((hi*4294967296+lo)/10000-11644473600000),ip=b.length-24,ilo=b.readUInt32LE(ip),ihi=b.readUInt32LE(ip+4),ims=Math.floor((ihi*4294967296+ilo)/10000-11644473600000),cp=b.length-8,clo=b.readUInt32LE(cp),chi=b.readUInt32LE(cp+4),cms=Math.floor((chi*4294967296+clo)/10000-11644473600000);o.push({SessionId:x.SessionId,Username:x.Username,Domain:x.Domain||'',LogonTime:ms,LastInputTime:ims,CurrentTime:cms});}}catch(e){}}return o;})()";
         return 'eval "' + code + '"';
     }
     function requestNativeLogonStart(nodeId, agent) {
@@ -482,8 +503,18 @@ module.exports.usagectl = function (parent) {
         if (!rec || !rec.pending) return;
         const startAt = Number(rec.pending.startAt);
         const endAt = Number.isFinite(readyAt) ? readyAt : Date.now();
-        rec.events.push([startAt, endAt, Math.max(0, endAt - startAt), status || 'ready',
-            rec.pending.logonSource || 'meshagent-session', rec.pending.logonFailure || null,
+        let finalStatus = status || 'ready';
+        let failureReason = rec.pending.logonFailure || null;
+        let durationMs = endAt - startAt;
+        if (finalStatus === 'ready' && durationMs < 0) {
+            finalStatus = 'clock-skew';
+            failureReason = 'clock-skew';
+            durationMs = null;
+        } else {
+            durationMs = Math.max(0, durationMs);
+        }
+        rec.events.push([startAt, endAt, durationMs, finalStatus,
+            rec.pending.logonSource || 'meshagent-session', failureReason,
             loginUserDisplay(rec.pending.username) || null]);
         delete rec.pending;
         delete loginPollAt[nodeId];
@@ -530,7 +561,8 @@ module.exports.usagectl = function (parent) {
 
         if (command.type === 'console') {
             const state = loginRuntimeState(nodeId);
-            state.nativeLogonLookupCompletedAt = Date.now();
+            const replyAt = Date.now();
+            state.nativeLogonLookupCompletedAt = replyAt;
             let sessions = null;
             try { sessions = JSON.parse(String(command.value || '')); } catch (_) {}
             const wanted = runtimeUsers[nodeId] || [];
@@ -539,8 +571,21 @@ module.exports.usagectl = function (parent) {
             (Array.isArray(sessions) ? sessions : []).forEach(s => {
                 if (!s) return;
                 const owner = loginUserKey((s.Domain ? s.Domain + '\\' : '') + (s.Username || ''));
-                const eventAt = Number(s.LogonTime);
-                const inputAt = Number(s.LastInputTime);
+                let eventAt = Number(s.LogonTime);
+                let inputAt = Number(s.LastInputTime);
+                const clientCurrentAt = Number(s.CurrentTime);
+                // LogonTime/LastInputTime viennent de l'horloge du poste,
+                // tandis que la disponibilité du bureau est horodatée par le
+                // serveur. Recaler les deux sur la même horloge évite les
+                // durées négatives lorsque le PC avance ou retarde de quelques
+                // secondes. CurrentTime est lu juste avant la réponse ; on le
+                // rapproche donc de l'heure de réception côté serveur.
+                if (Number.isFinite(clientCurrentAt) && clientCurrentAt > 0 &&
+                    Math.abs(clientCurrentAt - replyAt) <= 7 * 86400000) {
+                    const clockOffset = replyAt - clientCurrentAt;
+                    eventAt += clockOffset;
+                    if (Number.isFinite(inputAt) && inputAt > 0) inputAt += clockOffset;
+                }
                 if (wanted.length && owner && wanted.indexOf(owner) < 0) return;
                 if (!Number.isFinite(eventAt) || eventAt < detectedAt - LOGIN_LOGON_LOOKBACK_MS || eventAt > detectedAt + 5 * 60000) return;
                 const inputReliable = Number.isFinite(inputAt) && inputAt > 0 &&
@@ -578,7 +623,14 @@ module.exports.usagectl = function (parent) {
         if (command.type === 'runcommands') {
             const result = String(command.result || '');
             const match = result.match(/USAGECTL_LOGON_(CIM|EVENT)=([^\r\n]+)/);
-            const eventAt = match ? new Date(match[2].trim()).getTime() : NaN;
+            const currentMatch = result.match(/USAGECTL_CURRENT=([^\r\n]+)/);
+            let eventAt = match ? new Date(match[2].trim()).getTime() : NaN;
+            const clientCurrentAt = currentMatch ? new Date(currentMatch[1].trim()).getTime() : NaN;
+            const replyAt = Date.now();
+            if (Number.isFinite(eventAt) && Number.isFinite(clientCurrentAt) &&
+                Math.abs(clientCurrentAt - replyAt) <= 7 * 86400000) {
+                eventAt += replyAt - clientCurrentAt;
+            }
             const detectedAt = Number(rec.pending.detectedAt || rec.pending.startAt);
             if (Number.isFinite(eventAt) && eventAt >= detectedAt - LOGIN_LOGON_LOOKBACK_MS && eventAt <= detectedAt + 5 * 60000) {
                 rec.pending.startAt = eventAt;
@@ -1481,7 +1533,7 @@ module.exports.usagectl = function (parent) {
                     const history = events.slice().sort((a, b) => Number(b[0]) - Number(a[0])).slice(0, LOGIN_HISTORY_MAX_PER_NODE).map(e => {
                         const source = String(e[4] || 'meshagent-session');
                         return {
-                            startAt: Number(e[0]), endAt: Number(e[1]), durationMs: Number(e[2]),
+                            startAt: Number(e[0]), endAt: Number(e[1]), durationMs: e[2] == null ? null : Number(e[2]),
                             status: String(e[3] || 'unknown'), source,
                             startReliable: source !== 'meshagent-session',
                             failureReason: e[5] ? String(e[5]) : null,
