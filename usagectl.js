@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 
+const PLUGIN_VERSION = '0.0.51';
 const CACHE_VERSION = 5;
 const CACHE_FILE = path.join(__dirname, 'usagectl-cache.json');
 const PRESENCE_VERSION = 1;
@@ -239,11 +240,25 @@ module.exports.usagectl = function (parent) {
     Object.keys(loginData.nodes).forEach(nodeId => {
         const rec = loginData.nodes[nodeId];
         (rec && Array.isArray(rec.events) ? rec.events : []).forEach(event => {
-            if (event && event[3] === 'ready' && Number(event[1]) < Number(event[0])) {
-                event[2] = null;
-                event[3] = 'clock-skew';
-                event[5] = 'clock-skew';
-                loginDataRepaired = true;
+            if (event && event[3] === 'ready') {
+                if (Number(event[1]) < Number(event[0])) {
+                    event[2] = null;
+                    event[3] = 'clock-skew';
+                    event[5] = 'clock-skew';
+                    loginDataRepaired = true;
+                } else if (String(event[4] || 'meshagent-session') === 'meshagent-session') {
+                    event[2] = null;
+                    event[3] = 'start-unavailable';
+                    if (!event[5]) event[5] = 'unavailable';
+                    loginDataRepaired = true;
+                } else if (String(event[4] || '') !== 'windows-wts-input') {
+                    // LogonTime/4624 commencent après la validation des
+                    // identifiants. La durée reste utile comme minimum, mais
+                    // ne doit pas être présentée comme le temps complet depuis
+                    // l'appui sur Entrée ni entrer dans les moyennes exactes.
+                    event[3] = 'ready-session';
+                    loginDataRepaired = true;
+                }
             }
         });
     });
@@ -506,7 +521,7 @@ module.exports.usagectl = function (parent) {
         let finalStatus = status || 'ready';
         let failureReason = rec.pending.logonFailure || null;
         let durationMs = endAt - startAt;
-        if (finalStatus === 'ready' && durationMs < 0) {
+        if ((finalStatus === 'ready' || finalStatus === 'ready-session') && durationMs < 0) {
             finalStatus = 'clock-skew';
             failureReason = 'clock-skew';
             durationMs = null;
@@ -731,7 +746,9 @@ module.exports.usagectl = function (parent) {
             const rawStart = command.value && (command.value.startTime || command.value.StartTime || command.value.creationDate);
             const processStart = rawStart ? new Date(rawStart).getTime() : NaN;
             const attemptStart = Number(rec.pending.startAt);
-            const readyStatus = rec.pending.logonSource === 'meshagent-session' ? 'start-unavailable' : 'ready';
+            const readyStatus = rec.pending.logonSource === 'meshagent-session'
+                ? 'start-unavailable'
+                : (rec.pending.logonSource === 'windows-wts-input' ? 'ready' : 'ready-session');
             // Une petite tolérance couvre le délai entre la création très rapide
             // de la session et l'arrivée du coreinfo sur le serveur.
             if (Number.isFinite(processStart) && processStart >= attemptStart - 30000 && processStart <= Date.now() + 5000) {
@@ -1524,10 +1541,11 @@ module.exports.usagectl = function (parent) {
                         return startAt >= range.start && startAt < range.end;
                     });
                     const completed = events.filter(e => e[3] === 'ready');
-                    const failed = events.filter(e => e[3] !== 'ready');
+                    const partial = events.filter(e => e[3] === 'ready-session');
+                    const failed = events.filter(e => e[3] !== 'ready' && e[3] !== 'ready-session');
                     const durations = completed.map(e => Number(e[2])).filter(Number.isFinite);
                     const durationTotalMs = durations.reduce((s, v) => s + v, 0);
-                    const latest = completed.slice().sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+                    const latest = completed.concat(partial).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
                     const pending = rec && rec.pending && Number(rec.pending.startAt) >= range.start && Number(rec.pending.startAt) < range.end
                         ? rec.pending : null;
                     const history = events.slice().sort((a, b) => Number(b[0]) - Number(a[0])).slice(0, LOGIN_HISTORY_MAX_PER_NODE).map(e => {
@@ -1568,11 +1586,14 @@ module.exports.usagectl = function (parent) {
                         mesh: meshNames[n.meshid] || n.meshid || '',
                         lastMs: latest ? Number(latest[2]) : null,
                         lastAt: latest ? Number(latest[1]) : null,
+                        lastPartial: !!(latest && latest[3] === 'ready-session'),
                         avgMs: durations.length ? Math.round(durationTotalMs / durations.length) : null,
                         maxMs: durations.length ? Math.max.apply(null, durations) : null,
                         count: durations.length,
                         durationTotalMs,
+                        partial: partial.length,
                         failed: failed.length,
+                        incomplete: partial.length + failed.length,
                         pendingStartedAt: pending ? Number(pending.startAt) : null,
                         pendingMs: pending ? Math.max(0, now - Number(pending.startAt)) : null,
                         pendingStage,
@@ -1629,6 +1650,7 @@ module.exports.usagectl = function (parent) {
                     rows, roomStats, globalStats, weekMode: range.weekMode, weekLabel: range.label, days: range.days,
                     customRange: !!range.customRange, periodLabel: range.label,
                     filteredMeshid: requestedMeshId || null,
+                    pluginVersion: PLUGIN_VERSION,
                     measuredFrom: 'windows-last-input-or-interactive-logon', measuredUntil: 'confirmed-desktop', timeout: null,
                 });
             });
@@ -1643,7 +1665,7 @@ module.exports.usagectl = function (parent) {
     function _handle(req, res, user) {
         const action = String((req.query && req.query.action) || '');
         if (!action) return res.render(path.join(__dirname, 'views/usagectl'), { user });
-        if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl' });
+        if (action === 'ping') return sendJson(res, 200, { ok: true, plugin: 'usagectl', version: PLUGIN_VERSION });
 
         if (action === 'lib') {
             const name = String((req.query && req.query.name) || '');

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.51
+
+- Les durées basées uniquement sur la création de la session Windows sont maintenant signalées comme « partielles » et affichées sous la forme « au moins … » : elles commencent après l’authentification et ne représentent pas le temps complet entre Entrée et le bureau.
+- Seules les mesures disposant d’un départ clavier Windows fiable entrent désormais dans les moyennes par poste, par salle et globales, y compris dans les rapports PDF.
+- Toute mesure dont la fin précède le début est invalidée et retirée des statistiques au lieu d’être affichée comme une réussite à `0s`.
+- L’interface indique la version réellement chargée par le serveur MeshCentral et avertit lorsqu’un redémarrage est requis après une mise à jour du plugin.
+
 ## 0.0.50
 
 - Correction des durées à `0s` lorsque l’horloge du poste Windows avance ou retarde de quelques secondes par rapport au serveur MeshCentral.

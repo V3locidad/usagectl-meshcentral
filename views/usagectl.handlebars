@@ -62,7 +62,7 @@
 </head>
 <body>
 
-<h2>Occupation réelle <span id="cfgState" class="pill ok">sessions OS</span> <span id="cacheState" class="pill"></span></h2>
+<h2>Occupation réelle <span id="cfgState" class="pill warn">vérification serveur…</span> <span id="cacheState" class="pill"></span></h2>
 
 <div class="metric-note">Un poste est occupé lorsqu'au moins une session utilisateur est ouverte. Il redevient libre à la déconnexion de l'utilisateur ou dès que le PC s'éteint. Le taux d'allumage reste affiché séparément. Les mesures sont conservées 400 jours (un peu plus d’un an).</div>
 
@@ -123,6 +123,19 @@
     });
     return fetch('/pluginadmin.ashx?pin=usagectl&' + qs, { credentials: 'include' }).then(function (r) { return r.json(); });
   }
+  api('ping').then(function (r) {
+    var state = $('cfgState');
+    if (r && r.version) {
+      state.textContent = 'sessions OS · serveur v' + r.version;
+      state.className = 'pill ok';
+    } else {
+      state.textContent = 'serveur ancien · redémarrage requis';
+      state.className = 'pill warn';
+    }
+  }).catch(function () {
+    $('cfgState').textContent = 'version serveur indisponible';
+    $('cfgState').className = 'pill warn';
+  });
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
@@ -168,6 +181,7 @@
   function loginStatusHtml(status) {
     if (status === 'pending') return '<span class="login-pending">⏳ En cours</span>';
     if (status === 'ready') return '<span class="login-ready">✓ Réussie</span>';
+    if (status === 'ready-session') return '<span class="login-failed">⚠ Partielle — départ après authentification</span>';
     if (status === 'start-unavailable') return '<span class="login-failed">⚠ Bureau détecté — mesure incomplète</span>';
     if (status === 'clock-skew') return '<span class="login-failed">⚠ Mesure invalide — horloges désynchronisées</span>';
     if (status === 'session-ended') return '<span class="login-failed">✕ Session fermée avant le bureau</span>';
@@ -570,8 +584,8 @@
   function renderLoginTimes() {
     var r = lastLoginResult; if (!r) return;
     var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
-    var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
-             + '<div class="metric-note">Le chrono démarre à la dernière saisie Windows précédant la création de la session — généralement l’appui sur <b>Entrée</b> qui valide les identifiants — et s’arrête lorsque le bureau est confirmé disponible : explorer.exe actif, écran de connexion fermé et état stable sur deux contrôles. Si cette saisie n’est pas disponible, l’heure de création de session est utilisée. Il n’y a aucun timeout.</div>';
+    var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + ' · serveur v' + escapeHtml(r.pluginVersion || 'ancienne') + '</h3></div>'
+             + '<div class="metric-note">Le chrono complet démarre à la dernière saisie Windows précédant la création de la session — généralement l’appui sur <b>Entrée</b> — et s’arrête lorsque le bureau est confirmé disponible. Seules ces mesures complètes entrent dans les moyennes. Si Windows ne fournit que l’heure de création de session, la durée est affichée comme un minimum partiel et n’est pas présentée comme le temps complet.</div>';
     var globalStats = r.globalStats || {};
     var roomStats = r.roomStats || [];
     html += '<div class="login-summary"><div class="login-global">'
@@ -616,7 +630,7 @@
           ? '<span class="login-pending">⏳ En cours depuis ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>'
             + (pendingDetail ? '<div style="font-size:11px;color:#777;font-weight:normal;margin-top:2px">' + escapeHtml(pendingDetail) + '</div>' : '')
           : (n.count ? '<span class="login-ready">✓ Mesuré</span>'
-            : (n.failed ? '<span class="login-failed">⚠ ' + n.failed + ' mesure' + (n.failed > 1 ? 's' : '') + ' incomplète' + (n.failed > 1 ? 's' : '') + '</span>'
+            : (n.incomplete ? '<span class="login-failed">⚠ ' + n.incomplete + ' mesure' + (n.incomplete > 1 ? 's' : '') + ' incomplète' + (n.incomplete > 1 ? 's' : '') + '</span>'
               : '<span style="color:#999">En attente d’une connexion</span>'));
         var historyExpanded = !!expandedLoginHistory[n.id];
         var historyButton = n.historyCount
@@ -625,11 +639,11 @@
         html += '<tr><td>' + escapeHtml(n.name) + '</td>'
               + '<td>' + escapeHtml(n.mesh) + '</td>'
               + '<td>' + state + '</td>'
-              + '<td>' + formatDurationMs(n.lastMs) + '</td>'
+              + '<td>' + (n.lastPartial ? 'au moins ' : '') + formatDurationMs(n.lastMs) + '</td>'
               + '<td>' + formatDurationMs(n.avgMs) + '</td>'
               + '<td>' + formatDurationMs(n.maxMs) + '</td>'
               + '<td>' + n.count + '</td>'
-              + '<td>' + n.failed + '</td>'
+              + '<td>' + n.incomplete + '</td>'
               + '<td>' + historyButton + '</td></tr>'
               + '<tr class="login-history-row" data-login-history="' + index + '" style="display:' + (historyExpanded ? 'table-row' : 'none') + '"><td colspan="9">' + renderLoginHistory(n) + '</td></tr>';
       });
@@ -658,7 +672,9 @@
              + '<table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Utilisateur</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
     history.forEach(function (e) {
       var reliable = !!e.startReliable;
-      var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable) ? '—' : formatDurationMs(e.durationMs);
+      var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable)
+        ? '—'
+        : (e.status === 'ready-session' ? 'au moins ' + formatDurationMs(e.durationMs) : formatDurationMs(e.durationMs));
       var result = loginStatusHtml(e.status);
       var failure = loginFailureLabel(e.failureReason);
       if (failure) result += '<div style="font-size:10px;color:#777;margin-top:2px">' + escapeHtml(failure) + '</div>';
@@ -1006,7 +1022,7 @@
     var globalStats = (loginTimes && loginTimes.globalStats) || {};
     var html = '<div class="page-break"></div>'
              + '<h2>Temps d’ouverture de session Windows</h2>'
-             + '<div class="muted" style="margin-bottom:10px">Délai entre la dernière saisie Windows précédant la création de session — généralement la validation par Entrée — et la disponibilité confirmée du bureau. Si cette saisie n’est pas disponible, l’heure de création de session est utilisée. Les connexions toujours en cours sont indiquées à l’instant de génération du rapport.</div>';
+             + '<div class="muted" style="margin-bottom:10px">Le temps complet va de la dernière saisie Windows précédant la création de session — généralement la validation par Entrée — jusqu’à la disponibilité confirmée du bureau. Seules ces mesures complètes entrent dans les moyennes. Lorsque Windows ne fournit que l’heure de création de session, le rapport conserve une durée minimale partielle, sans la présenter comme le temps complet. Les connexions toujours en cours sont indiquées à l’instant de génération.</div>';
     if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
     var scopeLabel = loginTimes && loginTimes.filteredMeshid && roomStats.length ? roomStats[0].name : 'Lycée — toutes les salles';
     html += '<h3 style="margin-top:14px">Temps moyen de connexion</h3>'
@@ -1017,7 +1033,7 @@
       html += '<tr><td>' + escapeHtml(room.name) + '</td><td>' + formatDurationMs(room.avgMs) + '</td>'
             + '<td>' + room.count + '</td><td>' + room.devicesWithMeasurements + ' / ' + room.devicesTotal + '</td></tr>';
     });
-    html += '</tbody></table><div class="muted" style="margin-top:4px;font-size:9px">Chaque connexion réussie de la période compte une fois dans les moyennes.</div>';
+    html += '</tbody></table><div class="muted" style="margin-top:4px;font-size:9px">Chaque mesure complète « validation par Entrée → bureau disponible » compte une fois dans les moyennes.</div>';
     html += '<table><thead><tr>'
           + '<th>Poste</th><th>Salle</th><th style="width:92px">État</th>'
           + '<th style="width:58px">Dernière</th><th style="width:58px">Moyenne</th><th style="width:58px">Maximum</th>'
@@ -1029,20 +1045,20 @@
         state = '<span class="login-pending-pdf">En cours · ' + formatDurationMs(Date.now() - n.pendingStartedAt) + '</span>';
       } else if (n.count) {
         state = '<span class="login-ready-pdf">Mesuré</span>';
-      } else if (n.failed) {
-        state = '<span class="login-failed">' + n.failed + ' incomplète' + (n.failed > 1 ? 's' : '') + '</span>';
+      } else if (n.incomplete) {
+        state = '<span class="login-failed">' + n.incomplete + ' incomplète' + (n.incomplete > 1 ? 's' : '') + '</span>';
       } else {
         state = '<span class="muted">En attente</span>';
       }
       html += '<tr><td><b>' + escapeHtml(n.name) + '</b></td><td>' + escapeHtml(n.mesh) + '</td>'
             + '<td>' + state + '</td>'
-            + '<td>' + formatDurationMs(n.lastMs) + '</td>'
+            + '<td>' + (n.lastPartial ? 'au moins ' : '') + formatDurationMs(n.lastMs) + '</td>'
             + '<td>' + formatDurationMs(n.avgMs) + '</td>'
             + '<td>' + formatDurationMs(n.maxMs) + '</td>'
-            + '<td>' + n.count + '</td><td>' + n.failed + '</td></tr>';
+            + '<td>' + n.count + '</td><td>' + n.incomplete + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Le compte Windows associé est conservé avec la mesure.</div>';
+    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué. Une durée précédée de « au moins » commence seulement à la création de la session, après l’authentification ; elle constitue donc un minimum. Une mesure peut aussi être incomplète si la session se ferme ou si l’agent se déconnecte avant la disponibilité confirmée du bureau. Le compte Windows associé est conservé.</div>';
     var allHistory = [];
     rows.forEach(function (n) {
       (n.history || []).forEach(function (e) {
@@ -1056,7 +1072,9 @@
       allHistory.forEach(function (item) {
         var e = item.event;
         var reliable = !!e.startReliable;
-        var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable) ? '—' : formatDurationMs(e.durationMs);
+        var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable)
+          ? '—'
+          : (e.status === 'ready-session' ? 'au moins ' + formatDurationMs(e.durationMs) : formatDurationMs(e.durationMs));
         var result = loginStatusHtml(e.status);
         var failure = loginFailureLabel(e.failureReason);
         if (failure) result += '<div style="font-size:8px;color:#777">' + escapeHtml(failure) + '</div>';

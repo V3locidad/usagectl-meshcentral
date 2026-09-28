@@ -216,9 +216,11 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, loginResponse.res, {});
     const loginBody = JSON.parse((await loginResponse.done).body);
     assert.equal(loginBody.timeout, null);
+    assert.equal(loginBody.pluginVersion, '0.0.51');
     assert.equal(loginBody.measuredFrom, 'windows-last-input-or-interactive-logon');
     assert.equal(loginBody.rows[0].count, 1);
     assert.equal(loginBody.rows[0].lastMs, 20 * 60 * 1000);
+    assert.equal(loginBody.rows[0].lastPartial, false);
     assert.equal(loginBody.rows[0].historyCount, 1);
     assert.equal(loginBody.rows[0].history[0].status, 'ready');
     assert.equal(loginBody.rows[0].history[0].source, 'windows-wts-input');
@@ -300,8 +302,12 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     const fallbackResponse = makeResponse();
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, fallbackResponse.res, {});
     const fallbackBody = JSON.parse((await fallbackResponse.done).body);
-    assert.equal(fallbackBody.rows[0].count, 2);
+    assert.equal(fallbackBody.rows[0].count, 1);
+    assert.equal(fallbackBody.rows[0].partial, 1);
+    assert.equal(fallbackBody.rows[0].incomplete, 1);
     assert.equal(fallbackBody.rows[0].lastMs, 20 * 60 * 1000);
+    assert.equal(fallbackBody.rows[0].lastPartial, true);
+    assert.equal(fallbackBody.rows[0].history[0].status, 'ready-session');
 
     now = new Date(2026, 7, 31, 13, 21, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
@@ -350,8 +356,10 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     const unavailableResponse = makeResponse();
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, unavailableResponse.res, {});
     const unavailableBody = JSON.parse((await unavailableResponse.done).body);
-    assert.equal(unavailableBody.rows[0].count, 2);
+    assert.equal(unavailableBody.rows[0].count, 1);
+    assert.equal(unavailableBody.rows[0].partial, 1);
     assert.equal(unavailableBody.rows[0].failed, 1);
+    assert.equal(unavailableBody.rows[0].incomplete, 2);
     assert.equal(unavailableBody.rows[0].history[0].status, 'start-unavailable');
     assert.equal(unavailableBody.rows[0].history[0].failureReason, 'not-found');
     assert.equal(unavailableBody.rows[0].history[0].startReliable, false);
@@ -373,7 +381,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     const loginPath = Object.keys(writes).find(p => p.endsWith('usagectl-logins.json'));
     assert.ok(loginPath);
     const storedLogins = JSON.parse(writes[loginPath]);
-    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'start-unavailable', 'agent-offline']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready-session', 'start-unavailable', 'agent-offline']);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-wts-input', 'windows-wts-session', 'meshagent-session', 'meshagent-session']);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[6]), ['DOMAINE\\alice', 'bob', 'charlie', 'dave']);
 });
