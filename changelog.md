@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.53
+
+- Lorsque `WTS LogonTime` est le seul départ fourni par MeshAgent, le plugin consulte maintenant aussi le journal de sécurité Windows et privilégie l’événement 4624 s’il est antérieur.
+- Le plugin attend cette vérification avant de clôturer le chronomètre, afin d’éviter les faux temps de `0s` ou `1s` lorsque Windows renseigne tardivement l’heure de session.
+- Si le journal Security est inaccessible ou ne contient aucun événement correspondant, la mesure WTS reste utilisée automatiquement sans bloquer la connexion.
+
 ## 0.0.52
 
 - Les durées positives basées sur `WTS LogonTime` redeviennent des mesures exploitables et sont de nouveau incluses dans les moyennes ; la source « Session Windows (MeshAgent) » reste visible dans l’historique.

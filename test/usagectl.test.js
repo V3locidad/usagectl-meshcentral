@@ -216,7 +216,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, loginResponse.res, {});
     const loginBody = JSON.parse((await loginResponse.done).body);
     assert.equal(loginBody.timeout, null);
-    assert.equal(loginBody.pluginVersion, '0.0.52');
+    assert.equal(loginBody.pluginVersion, '0.0.53');
     assert.equal(loginBody.measuredFrom, 'windows-last-input-or-interactive-logon');
     assert.equal(loginBody.rows[0].count, 1);
     assert.equal(loginBody.rows[0].lastMs, 20 * 60 * 1000);
@@ -278,6 +278,15 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
             LogonTime: new Date(2026, 7, 31, 13, 0, 0, 0).getTime() }]),
     }, agent);
     const bobSessionId = bobLookup.sessionid;
+    const bobPowerShell = sent[sent.length - 1];
+    assert.equal(bobPowerShell.action, 'runcommands');
+    assert.match(bobPowerShell.cmds, /EventID=4624/);
+    // Sur certains postes, WTS LogonTime est tardif. Le journal de sécurité
+    // permet alors de retrouver un début antérieur et d'éviter un faux 1 s.
+    plugin.hook_processAgentData({
+        action: 'msg', type: 'runcommands', sessionid: bobPowerShell.sessionid,
+        result: 'USAGECTL_LOGON_EVENT=2026-08-31T10:59:50.000Z\r\nUSAGECTL_CURRENT=2026-08-31T11:20:00.000Z',
+    }, agent);
     plugin.hook_processAgentData({
         action: 'msg', type: 'userSessions', sessionid: bobSessionId,
         data: [{ Username: 'bob', SessionId: 5, State: 'Active' }],
@@ -304,8 +313,9 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.equal(fallbackBody.rows[0].count, 2);
     assert.equal(fallbackBody.rows[0].partial, 0);
     assert.equal(fallbackBody.rows[0].incomplete, 0);
-    assert.equal(fallbackBody.rows[0].lastMs, 20 * 60 * 1000);
+    assert.equal(fallbackBody.rows[0].lastMs, 20 * 60 * 1000 + 10 * 1000);
     assert.equal(fallbackBody.rows[0].history[0].status, 'ready');
+    assert.equal(fallbackBody.rows[0].history[0].source, 'windows-event-4624');
 
     now = new Date(2026, 7, 31, 13, 21, 0, 0).getTime();
     plugin.hook_processAgentData({ action: 'coreinfo', users: [] }, agent);
@@ -380,6 +390,6 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     assert.ok(loginPath);
     const storedLogins = JSON.parse(writes[loginPath]);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[3]), ['ready', 'ready', 'start-unavailable', 'agent-offline']);
-    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-wts-input', 'windows-wts-session', 'meshagent-session', 'meshagent-session']);
+    assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[4]), ['windows-wts-input', 'windows-event-4624', 'meshagent-session', 'meshagent-session']);
     assert.deepEqual(storedLogins.nodes[nodeId].events.map(e => e[6]), ['DOMAINE\\alice', 'bob', 'charlie', 'dave']);
 });

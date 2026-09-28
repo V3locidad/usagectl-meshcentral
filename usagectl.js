@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PLUGIN_VERSION = '0.0.52';
+const PLUGIN_VERSION = '0.0.53';
 const CACHE_VERSION = 5;
 const CACHE_FILE = path.join(__dirname, 'usagectl-cache.json');
 const PRESENCE_VERSION = 1;
@@ -427,7 +427,7 @@ module.exports.usagectl = function (parent) {
         if (sent) state.nativeLogonLookupAt = Date.now();
         return sent;
     }
-    function requestLogonStart(nodeId, agent) {
+    function requestLogonStart(nodeId, agent, refineWtsStart) {
         const rec = loginData.nodes[nodeId];
         if (!rec || !rec.pending) return false;
         const users = runtimeUsers[nodeId] || [];
@@ -441,6 +441,7 @@ module.exports.usagectl = function (parent) {
         if (sent) {
             state.logonLookupAt = Date.now();
             state.logonLookupAttempts = Number(state.logonLookupAttempts || 0) + 1;
+            state.logonRefinementPending = !!refineWtsStart;
         }
         return sent;
     }
@@ -476,6 +477,16 @@ module.exports.usagectl = function (parent) {
             }
             if (now - lookupAt < LOGIN_LOOKUP_TIMEOUT_MS) return;
             useLogonLookupFallback(nodeId, 'timeout');
+        }
+        // WTS LogonTime peut n'être renseigné qu'à la fin d'une ouverture de
+        // session lente. Lorsqu'il sert de départ provisoire, attendre la
+        // réponse du journal 4624 avant de pouvoir clôturer la mesure. Sans
+        // cela Explorer peut terminer le chrono avant l'arrivée du meilleur
+        // horodatage Windows.
+        if (state.logonRefinementPending) {
+            const lookupAt = Number(state.logonLookupAt || 0);
+            if (!state.logonLookupCompletedAt && lookupAt && now - lookupAt < LOGIN_LOOKUP_TIMEOUT_MS) return;
+            state.logonRefinementPending = false;
         }
         if (!force && Number(loginPollAt[nodeId]) + LOGIN_POLL_MS > now) return;
         const sessionid = loginSessionId(pending);
@@ -627,6 +638,14 @@ module.exports.usagectl = function (parent) {
                 state.logonLookupCompletedAt = Date.now();
                 delete state.logonLookupFailed;
                 saveLoginSoon();
+                // LastInputTime, lorsqu'il est cohérent, reste le départ le
+                // plus proche de la validation par Entrée. Sinon LogonTime est
+                // seulement provisoire : l'événement Security 4624 peut être
+                // sensiblement antérieur sur les profils Windows lents.
+                if (best.source === 'windows-wts-session') {
+                    delete state.logonLookupCompletedAt;
+                    if (requestLogonStart(nodeId, agent, true)) return true;
+                }
                 pollLogin(nodeId, agent, true);
             } else if (!state.logonLookupAt) {
                 // Ancien MeshAgent ou API WTS indisponible : conserver le
@@ -637,6 +656,7 @@ module.exports.usagectl = function (parent) {
         }
 
         if (command.type === 'runcommands') {
+            const state = loginRuntimeState(nodeId);
             const result = String(command.result || '');
             const match = result.match(/USAGECTL_LOGON_(CIM|EVENT)=([^\r\n]+)/);
             const currentMatch = result.match(/USAGECTL_CURRENT=([^\r\n]+)/);
@@ -649,15 +669,21 @@ module.exports.usagectl = function (parent) {
             }
             const detectedAt = Number(rec.pending.detectedAt || rec.pending.startAt);
             if (Number.isFinite(eventAt) && eventAt >= detectedAt - LOGIN_LOGON_LOOKBACK_MS && eventAt <= detectedAt + 5 * 60000) {
-                rec.pending.startAt = eventAt;
-                rec.pending.logonSource = match[1] === 'CIM' ? 'windows-logon-session' : 'windows-event-4624';
-                const state = loginRuntimeState(nodeId);
-                state.logonLookupCompletedAt = Date.now();
+                const currentStart = Number(rec.pending.startAt);
+                // Ne remplace un départ WTS déjà trouvé que si le journal
+                // fournit réellement un instant plus ancien. Un résultat CIM
+                // identique ou plus tardif n'améliore pas la mesure.
+                if (!rec.pending.logonSource || !Number.isFinite(currentStart) || eventAt < currentStart) {
+                    rec.pending.startAt = eventAt;
+                    rec.pending.logonSource = match[1] === 'CIM' ? 'windows-logon-session' : 'windows-event-4624';
+                }
                 delete state.logonLookupFailed;
-                saveLoginSoon();
             } else {
                 useLogonLookupFallback(nodeId, result.indexOf('USAGECTL_LOGON_ERROR') >= 0 ? 'command-error' : 'not-found');
             }
+            state.logonLookupCompletedAt = Date.now();
+            state.logonRefinementPending = false;
+            saveLoginSoon();
             pollLogin(nodeId, agent, true);
             return true;
         }
