@@ -181,7 +181,7 @@
   function loginStatusHtml(status) {
     if (status === 'pending') return '<span class="login-pending">⏳ En cours</span>';
     if (status === 'ready') return '<span class="login-ready">✓ Réussie</span>';
-    if (status === 'ready-session') return '<span class="login-failed">⚠ Partielle — départ après authentification</span>';
+    if (status === 'ready-session') return '<span class="login-ready">✓ Mesurée — session Windows</span>';
     if (status === 'start-unavailable') return '<span class="login-failed">⚠ Bureau détecté — mesure incomplète</span>';
     if (status === 'clock-skew') return '<span class="login-failed">⚠ Mesure invalide — horloges désynchronisées</span>';
     if (status === 'session-ended') return '<span class="login-failed">✕ Session fermée avant le bureau</span>';
@@ -585,7 +585,7 @@
     var r = lastLoginResult; if (!r) return;
     var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
     var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + ' · serveur v' + escapeHtml(r.pluginVersion || 'ancienne') + '</h3></div>'
-             + '<div class="metric-note">Le chrono complet démarre à la dernière saisie Windows précédant la création de la session — généralement l’appui sur <b>Entrée</b> — et s’arrête lorsque le bureau est confirmé disponible. Seules ces mesures complètes entrent dans les moyennes. Si Windows ne fournit que l’heure de création de session, la durée est affichée comme un minimum partiel et n’est pas présentée comme le temps complet.</div>';
+             + '<div class="metric-note">Le chrono démarre à la dernière saisie Windows disponible — généralement l’appui sur <b>Entrée</b>. Lorsque le poste ne fournit pas cette information, l’heure de création de la session Windows est utilisée comme meilleur départ disponible. Le chrono s’arrête lorsque le bureau est confirmé utilisable. La source exacte reste indiquée dans l’historique.</div>';
     var globalStats = r.globalStats || {};
     var roomStats = r.roomStats || [];
     html += '<div class="login-summary"><div class="login-global">'
@@ -639,7 +639,7 @@
         html += '<tr><td>' + escapeHtml(n.name) + '</td>'
               + '<td>' + escapeHtml(n.mesh) + '</td>'
               + '<td>' + state + '</td>'
-              + '<td>' + (n.lastPartial ? 'au moins ' : '') + formatDurationMs(n.lastMs) + '</td>'
+              + '<td>' + formatDurationMs(n.lastMs) + '</td>'
               + '<td>' + formatDurationMs(n.avgMs) + '</td>'
               + '<td>' + formatDurationMs(n.maxMs) + '</td>'
               + '<td>' + n.count + '</td>'
@@ -672,9 +672,7 @@
              + '<table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Utilisateur</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
     history.forEach(function (e) {
       var reliable = !!e.startReliable;
-      var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable)
-        ? '—'
-        : (e.status === 'ready-session' ? 'au moins ' + formatDurationMs(e.durationMs) : formatDurationMs(e.durationMs));
+      var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable) ? '—' : formatDurationMs(e.durationMs);
       var result = loginStatusHtml(e.status);
       var failure = loginFailureLabel(e.failureReason);
       if (failure) result += '<div style="font-size:10px;color:#777;margin-top:2px">' + escapeHtml(failure) + '</div>';
@@ -1022,7 +1020,7 @@
     var globalStats = (loginTimes && loginTimes.globalStats) || {};
     var html = '<div class="page-break"></div>'
              + '<h2>Temps d’ouverture de session Windows</h2>'
-             + '<div class="muted" style="margin-bottom:10px">Le temps complet va de la dernière saisie Windows précédant la création de session — généralement la validation par Entrée — jusqu’à la disponibilité confirmée du bureau. Seules ces mesures complètes entrent dans les moyennes. Lorsque Windows ne fournit que l’heure de création de session, le rapport conserve une durée minimale partielle, sans la présenter comme le temps complet. Les connexions toujours en cours sont indiquées à l’instant de génération.</div>';
+             + '<div class="muted" style="margin-bottom:10px">Délai entre le meilleur départ fourni par Windows et la disponibilité confirmée du bureau. Le départ est la dernière saisie Windows lorsqu’elle est disponible ; sinon, l’heure de création de la session Windows est utilisée. La source exacte figure dans l’historique. Les connexions toujours en cours sont indiquées à l’instant de génération.</div>';
     if (!rows.length) return html + '<div class="muted">Aucun poste Windows sur cette période.</div>';
     var scopeLabel = loginTimes && loginTimes.filteredMeshid && roomStats.length ? roomStats[0].name : 'Lycée — toutes les salles';
     html += '<h3 style="margin-top:14px">Temps moyen de connexion</h3>'
@@ -1033,7 +1031,7 @@
       html += '<tr><td>' + escapeHtml(room.name) + '</td><td>' + formatDurationMs(room.avgMs) + '</td>'
             + '<td>' + room.count + '</td><td>' + room.devicesWithMeasurements + ' / ' + room.devicesTotal + '</td></tr>';
     });
-    html += '</tbody></table><div class="muted" style="margin-top:4px;font-size:9px">Chaque mesure complète « validation par Entrée → bureau disponible » compte une fois dans les moyennes.</div>';
+    html += '</tbody></table><div class="muted" style="margin-top:4px;font-size:9px">Chaque ouverture de session Windows mesurée compte une fois dans les moyennes.</div>';
     html += '<table><thead><tr>'
           + '<th>Poste</th><th>Salle</th><th style="width:92px">État</th>'
           + '<th style="width:58px">Dernière</th><th style="width:58px">Moyenne</th><th style="width:58px">Maximum</th>'
@@ -1052,13 +1050,13 @@
       }
       html += '<tr><td><b>' + escapeHtml(n.name) + '</b></td><td>' + escapeHtml(n.mesh) + '</td>'
             + '<td>' + state + '</td>'
-            + '<td>' + (n.lastPartial ? 'au moins ' : '') + formatDurationMs(n.lastMs) + '</td>'
+            + '<td>' + formatDurationMs(n.lastMs) + '</td>'
             + '<td>' + formatDurationMs(n.avgMs) + '</td>'
             + '<td>' + formatDurationMs(n.maxMs) + '</td>'
             + '<td>' + n.count + '</td><td>' + n.incomplete + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué. Une durée précédée de « au moins » commence seulement à la création de la session, après l’authentification ; elle constitue donc un minimum. Une mesure peut aussi être incomplète si la session se ferme ou si l’agent se déconnecte avant la disponibilité confirmée du bureau. Le compte Windows associé est conservé.</div>';
+    html += '<div class="muted" style="margin-top:6px;font-size:9px">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : elle correspond à une heure de départ indisponible, une session fermée ou un agent déconnecté avant la disponibilité confirmée du bureau. Le compte Windows associé est conservé.</div>';
     var allHistory = [];
     rows.forEach(function (n) {
       (n.history || []).forEach(function (e) {
@@ -1072,9 +1070,7 @@
       allHistory.forEach(function (item) {
         var e = item.event;
         var reliable = !!e.startReliable;
-        var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable)
-          ? '—'
-          : (e.status === 'ready-session' ? 'au moins ' + formatDurationMs(e.durationMs) : formatDurationMs(e.durationMs));
+        var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable) ? '—' : formatDurationMs(e.durationMs);
         var result = loginStatusHtml(e.status);
         var failure = loginFailureLabel(e.failureReason);
         if (failure) result += '<div style="font-size:8px;color:#777">' + escapeHtml(failure) + '</div>';

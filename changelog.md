@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.52
+
+- Les durées positives basées sur `WTS LogonTime` redeviennent des mesures exploitables et sont de nouveau incluses dans les moyennes ; la source « Session Windows (MeshAgent) » reste visible dans l’historique.
+- Les données reclassées « partielles » par la version 0.0.51 sont restaurées automatiquement sans perdre leur durée, leur utilisateur ni leur historique.
+- Les mesures réellement impossibles, dont la fin précède le début, restent invalidées et exclues des statistiques.
+
 ## 0.0.51
 
 - Les durées basées uniquement sur la création de la session Windows sont maintenant signalées comme « partielles » et affichées sous la forme « au moins … » : elles commencent après l’authentification et ne représentent pas le temps complet entre Entrée et le bureau.
