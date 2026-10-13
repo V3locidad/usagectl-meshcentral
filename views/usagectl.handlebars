@@ -2,7 +2,8 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>usagectl</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usage Control</title>
 <style>
   body { font-family: -apple-system, Segoe UI, sans-serif; margin: 10px; font-size: 13px; }
   h2 { margin: 0 0 8px 0; }
@@ -58,27 +59,100 @@
   .heat-cell { width: 60px; height: 28px; color: #fff; font-weight: bold; border-radius: 3px; }
   .heat-cell.empty-cell { background: #eee; color: #aaa; }
   .top-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  :root { color-scheme:light; --ink:#1c2b40; --muted:#64748b; --line:#dfe6ee; --blue:#205dcc; --soft:#edf4ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:18px; background:#f4f7fb; color:var(--ink); font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; overflow-anchor:none; }
+  button,input,select { font:inherit; }
+  button { min-height:32px; border-color:#cbd6e3; border-radius:6px; color:var(--ink); font-weight:550; background:#fff; }
+  button:hover { border-color:#98b4dc; background:#f3f7fc; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.primary { background:var(--blue); border-color:var(--blue); }
+  :focus-visible { outline:3px solid #80abfa; outline-offset:2px; }
+  input[type=text],input[type=date],select { padding:7px 9px; border:1px solid #cbd6e3; border-radius:6px; min-height:33px; color:var(--ink); background:#fff; }
+  input[type=checkbox] { accent-color:var(--blue); }
+  .app-head { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:17px; }
+  .brand { display:flex; gap:12px; align-items:center; }
+  .brand-mark { width:40px; height:40px; border-radius:10px; background:var(--blue); color:#fff; display:grid; place-items:center; flex-shrink:0; }
+  .brand-mark svg { width:24px; height:24px; }
+  .app-head h1 { margin:0; font-size:21px; letter-spacing:-.5px; }
+  .app-head p { margin:1px 0 0; color:var(--muted); font-size:12px; }
+  .workspace-state { text-align:right; font-size:11px; color:var(--muted); }
+  .workspace-state span { display:block; margin-top:4px; }
+  .pill { border-radius:5px; background:#eef2f6; color:#596d84; }
+  .metric-note { border:1px solid #dbe7f5; border-radius:7px; padding:10px 12px; background:#edf4ff; color:#526884; }
+  .bar { padding:12px; gap:10px; background:#fff; border:1px solid var(--line); border-radius:9px; margin:12px 0; }
+  .bar > * { flex-shrink:1; }
+  .period-field { min-width:0; max-width:100%; display:inline-flex; gap:7px; align-items:center; flex-wrap:wrap; }
+  .period-field > label { font-size:11px; color:var(--muted); }
+  .tabs { gap:5px; padding:5px; border:1px solid var(--line); border-radius:9px; background:#fff; margin-bottom:4px; flex-wrap:wrap; }
+  .tab { border:0; border-radius:6px; padding:9px 15px; color:#536781; background:transparent; font-size:12px; }
+  .tab.active { border:0; background:var(--soft); color:var(--blue); }
+  .view-feedback { display:flex; justify-content:space-between; gap:12px; align-items:center; min-height:38px; color:var(--muted); font-size:11px; }
+  #viewStatus { min-width:0; } #progressBox { width:240px; flex:0 0 240px; min-height:30px; visibility:hidden; }
+  .progress { height:4px; margin:3px 0; background:#e5ebf3; }
+  #content { min-height:240px; }
+  .hdr { margin:0 0 13px; flex-wrap:wrap; } .hdr h3 { font-size:15px; min-width:220px; }
+  .table-scroll { width:100%; overflow:auto; border:1px solid var(--line); border-radius:9px; background:#fff; }
+  #content table { background:#fff; }
+  #content th { background:#f9fbfd; color:#596d84; font-size:11px; vertical-align:middle; }
+  #content td { padding:12px; border-color:#edf1f6; font-size:12px; }
+  .room-link { padding:0; border:0; color:var(--blue); background:transparent; text-align:left; font-weight:600; }
+  .overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:0 0 16px; }
+  .overview-card { padding:14px 16px; background:#fff; border:1px solid var(--line); border-radius:9px; }
+  .overview-card b { display:block; font-size:26px; line-height:1.3; margin-bottom:4px; }
+  .overview-card span { font-size:11px; color:var(--muted); }
+  .occBar { height:8px; border-radius:5px; background:#edf1f6; min-width:90px; }
+  .lvl0 > span { background:#bacde7; } .lvl1 > span { background:#7fa4df; } .lvl2 > span,.lvl3 > span { background:#3770cb; }
+  .login-summary { grid-template-columns:minmax(240px,300px) minmax(0,1fr); align-items:stretch; }
+  .login-global { background:#fff; border:1px solid var(--line); border-radius:9px; padding:18px; }
+  .login-global .value { color:var(--blue); font-size:30px; }
+  .login-global .detail { font-size:11px; line-height:1.6; }
+  .login-summary .table-scroll { max-height:270px; }
+  .login-summary th { position:sticky; top:0; }
+  .login-history-row > td { padding:12px !important; }
+  .login-history-row table { min-width:780px; }
+  .top-cols > div { min-width:0; } .top-cols h3 { font-size:13px; }
+  .heat-cell { width:auto; min-width:65px; height:42px; display:grid; place-items:center; border-radius:5px; }
+  .empty { color:var(--muted); padding:32px; }
+  @media(max-width:750px) {
+    body { padding:10px; }
+    .app-head { align-items:start; flex-direction:column; gap:8px; }
+    .workspace-state { display:flex; text-align:left; gap:8px; flex-wrap:wrap; }
+    .bar { align-items:start; } .bar > .period-field { flex-basis:100%; }
+    .bar select { max-width:100%; } #filterInput { width:100% !important; }
+    .tabs { gap:2px; } .tab { flex:1 0 40%; padding:9px 10px; }
+    .view-feedback { flex-wrap:wrap; gap:2px; } #progressBox { flex:1 1 100%; }
+    .overview { gap:7px; } .overview-card { padding:11px; } .overview-card b { font-size:22px; }
+    .login-summary,.top-cols { grid-template-columns:1fr; }
+    #content > .table-scroll > table { min-width:780px; }
+    .hdr h3 { min-width:0; flex-basis:100%; }
+    .hdr select { max-width:100%; }
+  }
 </style>
 </head>
 <body>
 
-<h2>Occupation réelle <span id="cfgState" class="pill warn">vérification serveur…</span> <span id="cacheState" class="pill"></span></h2>
+<header class="app-head">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 3v18h17M8 17v-5M13 17V7M18 17v-8"/></svg></span><div><h1>Usage Control</h1><p>Occupation des salles et temps de connexion Windows.</p></div></div>
+  <div class="workspace-state"><span id="cfgState" class="pill warn">Vérification du serveur…</span><span id="cacheState" class="pill"></span></div>
+</header>
 
 <div class="metric-note">Un poste est occupé lorsqu'au moins une session utilisateur est ouverte. Il redevient libre à la déconnexion de l'utilisateur ou dès que le PC s'éteint. Le taux d'allumage reste affiché séparément. Les mesures sont conservées 400 jours (un peu plus d’un an).</div>
 
 <div class="bar">
-  <span>Mode :</span>
+  <span class="period-field"><label for="modeSel">Période</label>
   <select id="modeSel">
     <option value="week" selected>Semaine précise (Lun-Ven 8h-18h)</option>
     <option value="rolling">Période glissante</option>
     <option value="custom">Dates précises</option>
-  </select>
-  <span id="weekWrap">
-    <span>Semaine :</span>
+  </select></span>
+  <span id="weekWrap" class="period-field">
+    <label for="weekSel">Semaine</label>
     <select id="weekSel"></select>
   </span>
-  <span id="rollingWrap" style="display:none">
-    <span>Période :</span>
+  <span class="period-field" id="rollingWrap" style="display:none">
+    <label for="daysSel">Durée</label>
     <select id="daysSel">
       <option value="1">Jour (24h)</option>
       <option value="7" selected>Semaine (7 j)</option>
@@ -86,32 +160,29 @@
       <option value="70">10 semaines (70 j)</option>
     </select>
   </span>
-  <span id="customWrap" style="display:none">
-    <span>Du :</span> <input type="date" id="customFrom">
-    <span>au :</span> <input type="date" id="customTo">
+  <span class="period-field" id="customWrap" style="display:none">
+    <label for="customFrom">Du</label> <input type="date" id="customFrom">
+    <label for="customTo">au</label> <input type="date" id="customTo">
   </span>
   <label id="hoursWrap" style="display:none" title="Ne compter que Lun-Ven 8h-18h"><input type="checkbox" id="schoolHours" checked> Lun-Ven 8h-18h</label>
-  <input type="text" id="filterInput" placeholder="🔎 Filtre nom (ex: PC-0023)" style="width: 200px">
+  <input type="text" id="filterInput" aria-label="Rechercher dans la vue" placeholder="Rechercher une salle ou un poste…" style="width: 260px">
   <span style="flex:1"></span>
-  <button id="refreshBtn" class="primary">↻ Rafraîchir</button>
-  <button id="forceBtn" title="Recalculer en ignorant le cache">⟳ Forcer</button>
-  <button id="pdfBtn" title="Exporter un rapport PDF (via Imprimer → Enregistrer au format PDF)">📄 Rapport PDF</button>
+  <button id="refreshBtn" class="primary">Rafraîchir</button>
+  <button id="forceBtn" title="Recalculer en ignorant le cache">Recalculer</button>
+  <button id="pdfBtn" title="Télécharger le rapport de la période sélectionnée">Rapport PDF</button>
 </div>
 
-<div class="tabs">
-  <div class="tab active" data-tab="salles">Salles</div>
-  <div class="tab" data-tab="heatmap">Heat-map</div>
-  <div class="tab" data-tab="horsHeures">Hors-heures (gaspillage)</div>
-  <div class="tab" data-tab="topPostes">Top postes</div>
-  <div class="tab" data-tab="loginTimes">Temps de connexion</div>
+<nav class="tabs" role="tablist" aria-label="Vues des statistiques">
+  <button class="tab active" id="tab-salles" data-tab="salles" role="tab" aria-selected="true" aria-controls="content" tabindex="0">Salles</button>
+  <button class="tab" id="tab-heatmap" data-tab="heatmap" role="tab" aria-selected="false" aria-controls="content" tabindex="-1">Occupation horaire</button>
+  <button class="tab" id="tab-horsHeures" data-tab="horsHeures" role="tab" aria-selected="false" aria-controls="content" tabindex="-1">Hors horaires</button>
+  <button class="tab" id="tab-topPostes" data-tab="topPostes" role="tab" aria-selected="false" aria-controls="content" tabindex="-1">Classement des postes</button>
+  <button class="tab" id="tab-loginTimes" data-tab="loginTimes" role="tab" aria-selected="false" aria-controls="content" tabindex="-1">Temps de connexion</button>
+</nav>
+<div class="view-feedback"><span id="viewStatus" role="status">Chargement de la période…</span>
+  <div id="progressBox"><div id="progressTxt"></div><div class="progress"><span id="progressBar" style="width:0%"></span></div></div>
 </div>
-
-<div id="progressBox" style="display:none">
-  <div style="font-size:11px;color:#666" id="progressTxt"></div>
-  <div class="progress"><span id="progressBar" style="width:0%"></span></div>
-</div>
-
-<div id="content"><div class="empty">Choisis la semaine, puis clique <b>↻ Rafraîchir</b>.</div></div>
+<div id="content" role="tabpanel" aria-labelledby="tab-salles"><div class="empty">Chargement des statistiques…</div></div>
 
 <script>
   function $(id) { return document.getElementById(id); }
@@ -217,27 +288,109 @@
   var progressTimer = null;
   var loginRefreshTimer = null;
 
+  var viewVersion = 0, activeRequest = null, displayedKey = null;
+  var lastHorsResult = null, lastTopResult = null, sallesFilter = '';
+
+  function setContent(html) {
+    var content = $('content');
+    if (content._usageHtml === html) return;
+    var x = window.scrollX, y = window.scrollY, top = content.scrollTop, left = content.scrollLeft;
+    var scrollPositions = {};
+    if (displayedKey) Array.prototype.forEach.call(content.querySelectorAll('[data-scroll-key]'), function (box) {
+      scrollPositions[box.getAttribute('data-scroll-key')] = [box.scrollLeft, box.scrollTop];
+    });
+    var focused = document.activeElement;
+    var focusedNode = focused && focused.getAttribute && focused.getAttribute('data-login-node');
+    content.innerHTML = html; content._usageHtml = html;
+    content.scrollTop = top; content.scrollLeft = left;
+    Array.prototype.forEach.call(content.querySelectorAll('[data-scroll-key]'), function (box) {
+      var position = scrollPositions[box.getAttribute('data-scroll-key')];
+      if (position) { box.scrollLeft = position[0]; box.scrollTop = position[1]; }
+    });
+    if (focusedNode) Array.prototype.forEach.call(content.querySelectorAll('[data-login-node]'), function (button) {
+      if (button.getAttribute('data-login-node') === focusedNode) button.focus({ preventScroll: true });
+    });
+    if (window.scrollX !== x || window.scrollY !== y) window.scrollTo(x, y);
+  }
+  function requestKey(action, query) {
+    var parts = Object.keys(query).filter(function (key) { return key !== 'force'; }).sort().map(function (key) { return key + '=' + String(query[key]); });
+    return action + ':' + parts.join('&');
+  }
+  function validatePeriod() {
+    if ($('modeSel').value === 'custom') {
+      var from = $('customFrom'), to = $('customTo');
+      if (!from.value || !to.value) return 'Choisissez les deux dates de la période.';
+      if (from.value > to.value) return 'La date de début doit précéder la date de fin.';
+      if ((from.min && from.value < from.min) || (to.max && to.value > to.max)) return 'Choisissez une période comprise dans les dates disponibles.';
+    }
+    if (isWeekMode() && !$('weekSel').value) return 'La liste des semaines est en cours de chargement.';
+    return '';
+  }
+  function invalidateView() {
+    viewVersion++; activeRequest = null;
+    if (loginRefreshTimer) { clearTimeout(loginRefreshTimer); loginRefreshTimer = null; }
+    stopProgress(); $('content').setAttribute('aria-busy', 'false'); setActiveTab();
+  }
+  function requestView(action, query, onData, silent) {
+    var key = requestKey(action, query), validation = validatePeriod();
+    if (validation) { invalidateView(); displayedKey = null; $('viewStatus').textContent = validation; setContent('<div class="empty">Corrigez la période pour afficher les statistiques.</div>'); return Promise.resolve(); }
+    if (activeRequest && activeRequest.key === key) return activeRequest.promise;
+    invalidateView();
+    var version = viewVersion, keep = displayedKey === key;
+    if (!keep) { displayedKey = null; setContent('<div class="empty">Chargement des statistiques…</div>'); }
+    $('viewStatus').textContent = 'Actualisation en cours…';
+    $('content').setAttribute('aria-busy', 'true');
+    if (!silent && action !== 'loginTimes') startProgress();
+    var request = { key: key, promise: null }; activeRequest = request; setActiveTab();
+    request.promise = api(action, query).then(function (r) {
+      if (version !== viewVersion) return;
+      if (!r || r.error) throw new Error(r && r.error || 'Réponse invalide');
+      onData(r); displayedKey = key;
+      updateCacheState(r);
+      $('viewStatus').textContent = 'Actualisé à ' + new Date().toLocaleTimeString('fr-FR') + (action === 'loginTimes' ? ' · suivi toutes les 15 s' : '');
+    }).catch(function (error) {
+      if (version !== viewVersion) return;
+      $('viewStatus').textContent = 'Actualisation impossible : ' + error.message + (keep ? ' · dernières données conservées' : '');
+      if (!keep) setContent('<div class="empty">Données indisponibles. Réessayez avec Rafraîchir.</div>');
+    }).then(function () {
+      if (version !== viewVersion) return;
+      activeRequest = null; stopProgress(); $('content').setAttribute('aria-busy', 'false'); setActiveTab();
+      if (action === 'loginTimes' && currentTab === 'loginTimes') scheduleLoginRefresh();
+    });
+    return request.promise;
+  }
+  function currentViewKey() {
+    var action = currentTab === 'salles' && inDetail ? 'salleDetail' : currentTab;
+    var q = getQuery();
+    if (action === 'salleDetail') q.meshid = detailMeshid;
+    if (action === 'heatmap' || action === 'horsHeures') q.meshid = currentMesh;
+    return requestKey(action, q);
+  }
+
   function startProgress() {
     if (progressTimer) return;
-    $('progressBox').style.display = '';
+    $('progressBox').style.visibility = 'visible';
+    var version = viewVersion, pending = false;
     $('progressBar').style.width = '0%';
     $('progressTxt').textContent = 'Démarrage…';
     progressTimer = setInterval(function () {
+      if (pending) return;
+      pending = true;
       api('progress').then(function (j) {
-        if (!j || j.idle) return;
+        if (version !== viewVersion || !j || j.idle) return;
         var pct = j.total ? Math.round(j.processed / j.total * 100) : 0;
         $('progressBar').style.width = pct + '%';
         $('progressTxt').textContent = j.processed + ' / ' + j.total + ' postes (' + pct + '%)';
-      }).catch(function () {});
+      }).catch(function () {}).then(function () { pending = false; });
     }, 1500);
   }
   function stopProgress() {
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-    $('progressBox').style.display = 'none';
+    $('progressBox').style.visibility = 'hidden';
   }
 
   function buildWeekOptions(dataMinMs) {
-    var sel = $('weekSel'); sel.innerHTML = '';
+    var sel = $('weekSel'), previous = sel.value; sel.innerHTML = '';
     var today = new Date(); today.setHours(0, 0, 0, 0);
     var dow = today.getDay();
     var mondayCurrent = new Date(today);
@@ -256,6 +409,7 @@
       if (noData) opt.disabled = true;
       sel.appendChild(opt);
     }
+    if (previous && Array.prototype.some.call(sel.options, function (o) { return o.value === previous && !o.disabled; })) sel.value = previous;
   }
 
   api('dataRange').then(function (r) {
@@ -269,7 +423,8 @@
                        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
       $('weekWrap').appendChild(info);
     }
-  }).catch(function () { buildWeekOptions(null); });
+    if (!viewVersion) loadCurrentTab(false);
+  }).catch(function () { buildWeekOptions(null); if (!viewVersion) loadCurrentTab(false); });
 
   function getQuery() {
     if ($('modeSel').value === 'week') return { weekStart: $('weekSel').value };
@@ -302,18 +457,9 @@
 
   // ====== Onglet Salles ======
   function loadSalles(force) {
-    currentTab = 'salles'; setActiveTab();
-    inDetail = false; detailMeshid = null;
-    $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
-    startProgress();
+    currentTab = 'salles'; inDetail = false; detailMeshid = null; setActiveTab();
     var q = getQuery(); if (force) q.force = '1';
-    api('salles', q).then(function (r) {
-      stopProgress();
-      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
-      lastSallesResult = r;
-      updateCacheState(r);
-      renderSalles();
-    }).catch(function (e) { stopProgress(); $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>'; });
+    return requestView('salles', q, function (r) { lastSallesResult = r; renderSalles(); });
   }
   function sortSalles(list) {
     var k = sallesSort.key, d = sallesSort.dir;
@@ -344,13 +490,13 @@
   function renderSalles() {
     var r = lastSallesResult; if (!r) return;
     var salles = applyFilter(r.salles || [], function (s) { return s.name; });
-    if (!salles.length) { $('content').innerHTML = '<div class="empty">Aucune salle.</div>'; return; }
+    if (!salles.length) { setContent('<div class="empty">Aucune salle avec ces filtres.</div>'); return; }
     salles = sortSalles(salles);
     var modeLabel = modeLabelText(r);
     var showDelta = r.prevWeekAvailable;
     var thStyle = 'cursor:pointer;user-select:none';
     var html = '<div class="hdr"><h3>Salles (' + salles.length + ') — occupation par sessions ouvertes' + modeLabel + '</h3></div>'
-             + '<table><thead><tr>'
+             + '<div class="table-scroll" data-scroll-key="salles-0"><table><thead><tr>'
              + '<th style="' + thStyle + '" data-sort="name">Salle' + sortArrow('name') + '</th>'
              + '<th style="width:80px;' + thStyle + '" data-sort="nodes">Postes' + sortArrow('nodes') + '</th>'
              + '<th style="width:200px;' + thStyle + '" data-sort="pct">Occupation' + sortArrow('pct') + '</th>'
@@ -375,7 +521,7 @@
         }
       }
       html += '<tr class="clickable" data-meshid="' + escapeHtml(s.meshid) + '">'
-            + '<td>' + escapeHtml(s.name) + '</td>'
+            + '<td><button class="room-link">' + escapeHtml(s.name) + '</button></td>'
             + '<td>' + postesLabel + '</td>'
             + '<td>' + (noData ? '<span style="color:#aaa;font-size:11px">pas de données</span>' : occBar(s.avgOnPct)) + '</td>'
             + '<td class="occLabel">' + (noData ? '—' : (s.avgOnPct + ' %')) + '</td>'
@@ -386,29 +532,36 @@
             + '<td>' + (s.avgObservedMinutes == null ? '—' : formatHm(s.avgObservedMinutes)) + '</td>'
             + '</tr>';
     });
-    html += '</tbody></table>'
+    html += '</tbody></table></div>'
           + '<div style="margin-top:7px;color:#777;font-size:11px">Durées moyennes par poste. « Temps semaine » correspond à la période déjà mesurée (jusqu’à 50h pour une semaine complète, du lundi au vendredi de 8h à 18h).</div>';
-    $('content').innerHTML = html;
+    var nodesTotal = salles.reduce(function (n, room) { return n + Number(room.nodes || 0); }, 0);
+    var measured = salles.reduce(function (n, room) { return n + Number(room.nodesWithData || 0); }, 0);
+    html = '<div class="overview"><div class="overview-card"><b>' + salles.length + '</b><span>Salles affichées</span></div>'
+      + '<div class="overview-card"><b>' + nodesTotal + '</b><span>Postes dans ces salles</span></div>'
+      + '<div class="overview-card"><b>' + measured + ' / ' + nodesTotal + '</b><span>Postes avec présence mesurée</span></div></div>' + html;
+    setContent(html);
     Array.prototype.forEach.call($('content').querySelectorAll('tr.clickable'), function (tr) {
       tr.onclick = function () { loadSalleDetail(tr.getAttribute('data-meshid')); };
     });
     Array.prototype.forEach.call($('content').querySelectorAll('th[data-sort]'), function (th) {
+      th.setAttribute('tabindex', '0');
+      th.setAttribute('aria-sort', sallesSort.key === th.getAttribute('data-sort') ? (sallesSort.dir === 1 ? 'ascending' : 'descending') : 'none');
+      th.onkeydown = function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); th.click(); } };
       th.onclick = function () {
         var k = th.getAttribute('data-sort');
         if (sallesSort.key === k) sallesSort.dir = -sallesSort.dir;
         else { sallesSort.key = k; sallesSort.dir = (k === 'name') ? 1 : -1; }
         renderSalles();
+        var header = $('content').querySelector('th[data-sort="' + k + '"]');
+        if (header) header.focus({ preventScroll: true });
       };
     });
   }
-  function loadSalleDetail(meshid) {
-    inDetail = true; detailMeshid = meshid;
-    $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
-    var q = getQuery(); q.meshid = meshid;
-    api('salleDetail', q).then(function (r) {
-      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
-      lastDetailResult = r; renderSalleDetail();
-    });
+  function loadSalleDetail(meshid, force) {
+    if (!inDetail || detailMeshid !== meshid) { sallesFilter = $('filterInput').value; $('filterInput').value = ''; }
+    currentTab = 'salles'; inDetail = true; detailMeshid = meshid; setActiveTab();
+    var q = getQuery(); q.meshid = meshid; if (force) q.force = '1';
+    return requestView('salleDetail', q, function (r) { lastDetailResult = r; renderSalleDetail(); });
   }
   function renderSalleDetail() {
     var r = lastDetailResult; if (!r) return;
@@ -420,7 +573,7 @@
     if (!nodes.length) html += '<div class="empty">Aucun poste.</div>';
     else {
       var showOff = r.weekMode;
-      html += '<table><thead><tr>'
+      html += '<div class="table-scroll" data-scroll-key="detail-0"><table><thead><tr>'
             + '<th>Poste</th><th>OS</th>'
             + '<th style="width:200px">Occupation (session)</th>'
             + '<th style="width:100px">%</th>'
@@ -444,24 +597,18 @@
               + (showOff ? '<td>' + (n.offMinutes != null ? formatHm(n.offMinutes) : '—') + '</td>' : '')
               + '</tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
     }
-    $('content').innerHTML = html;
-    $('backBtn').onclick = function () { inDetail = false; renderSalles(); };
+    setContent(html);
+    $('backBtn').onclick = function () { $('filterInput').value = sallesFilter; loadSalles(false); };
   }
 
   // ====== Onglet Heat-map ======
-  function loadHeatmap() {
+  function loadHeatmap(force) {
     currentTab = 'heatmap'; setActiveTab();
-    if (!isWeekMode()) { $('content').innerHTML = '<div class="empty">Heat-map disponible uniquement en mode <b>Semaine précise</b>.</div>'; return; }
-    $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
-    startProgress();
-    var q = getQuery(); q.meshid = currentMesh;
-    api('heatmap', q).then(function (r) {
-      stopProgress();
-      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
-      renderHeatmap(r);
-    }).catch(function (e) { stopProgress(); $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>'; });
+    if (!isWeekMode()) { invalidateView(); displayedKey = null; setContent('<div class="empty">Cette vue est disponible en mode Semaine précise.</div>'); return Promise.resolve(); }
+    var q = getQuery(); q.meshid = currentMesh; if (force) q.force = '1';
+    return requestView('heatmap', q, function (r) { renderHeatmap(r); });
   }
   function renderHeatmap(r) {
     var days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'];
@@ -470,8 +617,8 @@
       selOpts += '<option value="' + escapeHtml(s.meshid) + '"' + (r.meshid === s.meshid ? ' selected' : '') + '>' + escapeHtml(s.name) + '</option>';
     });
     var html = '<div class="hdr"><h3>Heat-map des sessions ouvertes — ' + escapeHtml(r.meshName || '') + ' (' + r.nodesCount + ' postes suivis) — ' + escapeHtml(r.weekLabel || '') + '</h3>'
-             + '<select id="heatMeshSel">' + selOpts + '</select></div>';
-    html += '<table class="heat-table"><thead><tr><th></th>';
+             + '<select id="heatMeshSel" aria-label="Salle de la grille horaire">' + selOpts + '</select></div>';
+    html += '<div class="table-scroll" data-scroll-key="heatmap-0"><table class="heat-table"><thead><tr><th></th>';
     for (var h = 8; h < 18; h++) html += '<th>' + h + 'h</th>';
     html += '</tr></thead><tbody>';
     for (var d = 0; d < 5; d++) {
@@ -486,24 +633,18 @@
       }
       html += '</tr>';
     }
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     html += '<div style="margin-top:10px;font-size:11px;color:#888">Vert = peu occupé / Rouge = très occupé. Chaque case représente le temps avec au moins une session ouverte, rapporté au temps réellement observé.</div>';
-    $('content').innerHTML = html;
+    setContent(html);
     $('heatMeshSel').onchange = function () { currentMesh = this.value; loadHeatmap(); };
   }
 
   // ====== Onglet Hors-heures ======
-  function loadHorsHeures() {
+  function loadHorsHeures(force) {
     currentTab = 'horsHeures'; setActiveTab();
-    if (!isWeekMode()) { $('content').innerHTML = '<div class="empty">Vue hors-heures disponible uniquement en mode <b>Semaine précise</b>.</div>'; return; }
-    $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
-    startProgress();
-    var q = getQuery(); q.meshid = currentMesh;
-    api('horsHeures', q).then(function (r) {
-      stopProgress();
-      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
-      renderHorsHeures(r);
-    }).catch(function (e) { stopProgress(); $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>'; });
+    if (!isWeekMode()) { invalidateView(); displayedKey = null; setContent('<div class="empty">Cette vue est disponible en mode Semaine précise.</div>'); return Promise.resolve(); }
+    var q = getQuery(); q.meshid = currentMesh; if (force) q.force = '1';
+    return requestView('horsHeures', q, function (r) { lastHorsResult = r; renderHorsHeures(r); });
   }
   function renderHorsHeures(r) {
     var selOpts = '<option value="all"' + (r.meshid === 'all' ? ' selected' : '') + '>Toutes les salles</option>';
@@ -513,10 +654,10 @@
     var totalLabel = formatHm(r.totalOffMinutes || 0);
     var nodes = applyFilter(r.nodes || [], function (n) { return n.name + ' ' + n.mesh; });
     var html = '<div class="hdr"><h3>Hors heures — postes allumés en dehors des cours — ' + escapeHtml(r.weekLabel || '') + ' (' + totalLabel + ' dispo)</h3>'
-             + '<select id="horsMeshSel">' + selOpts + '</select></div>';
+             + '<select id="horsMeshSel" aria-label="Salle hors horaires">' + selOpts + '</select></div>';
     if (!nodes.length) html += '<div class="empty">Aucun poste avec données hors heures.</div>';
     else {
-      html += '<table><thead><tr><th>Poste</th><th>Salle</th><th style="width:200px">Temps hors heures</th><th style="width:100px">%</th><th style="width:200px">Durée</th></tr></thead><tbody>';
+      html += '<div class="table-scroll" data-scroll-key="hors-0"><table><thead><tr><th>Poste</th><th>Salle</th><th style="width:200px">Temps hors heures</th><th style="width:100px">%</th><th style="width:200px">Durée</th></tr></thead><tbody>';
       nodes.forEach(function (n) {
         html += '<tr><td>' + escapeHtml(n.name) + '</td>'
               + '<td>' + escapeHtml(n.mesh) + '</td>'
@@ -524,32 +665,27 @@
               + '<td class="occLabel">' + n.offPct + ' %</td>'
               + '<td>' + formatHm(n.offMinutes) + ' / ' + totalLabel + '</td></tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
       html += '<div style="margin-top:10px;font-size:11px;color:#888">Temps allumé en dehors de Lun-Ven 8h-18h. Indicateur de gaspillage énergétique.</div>';
     }
-    $('content').innerHTML = html;
+    setContent(html);
     $('horsMeshSel').onchange = function () { currentMesh = this.value; loadHorsHeures(); };
   }
 
   // ====== Onglet Top postes ======
-  function loadTopPostes() {
+  function loadTopPostes(force) {
     currentTab = 'topPostes'; setActiveTab();
-    if (!isWeekMode()) { $('content').innerHTML = '<div class="empty">Top postes disponible uniquement en mode <b>Semaine précise</b>.</div>'; return; }
-    $('content').innerHTML = '<div class="empty">Calcul en cours…</div>';
-    startProgress();
-    api('topPostes', getQuery()).then(function (r) {
-      stopProgress();
-      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
-      renderTopPostes(r);
-    }).catch(function (e) { stopProgress(); $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>'; });
+    if (!isWeekMode()) { invalidateView(); displayedKey = null; setContent('<div class="empty">Cette vue est disponible en mode Semaine précise.</div>'); return Promise.resolve(); }
+    var q = getQuery(); if (force) q.force = '1';
+    return requestView('topPostes', q, function (r) { lastTopResult = r; renderTopPostes(r); });
   }
   function renderTopPostes(r) {
     function tbl(title, list) {
-      var h = '<h3>' + title + '</h3><table><thead><tr><th>Poste</th><th>Salle</th><th style="width:100px">%</th><th style="width:160px">Occupé / observé</th></tr></thead><tbody>';
-      list.forEach(function (n) {
+      var h = '<h3>' + title + '</h3><div class="table-scroll" data-scroll-key="top-' + escapeHtml(title) + '"><table><thead><tr><th>Poste</th><th>Salle</th><th style="width:100px">%</th><th style="width:160px">Occupé / observé</th></tr></thead><tbody>';
+      applyFilter(list, function (n) { return n.name + ' ' + n.mesh; }).forEach(function (n) {
         h += '<tr><td>' + escapeHtml(n.name) + '</td><td>' + escapeHtml(n.mesh) + '</td><td class="occLabel">' + n.onPct + ' %</td><td>' + formatHm(n.onMinutes) + ' / ' + formatHm(n.observedMinutes) + '</td></tr>';
       });
-      h += '</tbody></table>';
+      h += '</tbody></table></div>';
       return h;
     }
     var html = '<div class="hdr"><h3>Top postes occupés — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
@@ -557,7 +693,7 @@
              + '<div>' + tbl('🔥 Les 10 plus utilisés', r.top || []) + '</div>'
              + '<div>' + tbl('💤 Les 10 moins utilisés', r.bottom || []) + '</div>'
              + '</div>';
-    $('content').innerHTML = html;
+    setContent(html);
   }
 
   // ====== Onglet Temps de connexion ======
@@ -570,21 +706,12 @@
   }
   function loadLoginTimes(silent) {
     currentTab = 'loginTimes'; setActiveTab();
-    if (!silent) $('content').innerHTML = '<div class="empty">Chargement des temps de connexion…</div>';
-    api('loginTimes', getQuery()).then(function (r) {
-      if (r.error) { $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(r.error) + '</div>'; return; }
-      lastLoginResult = r;
-      renderLoginTimes();
-      scheduleLoginRefresh();
-    }).catch(function (e) {
-      $('content').innerHTML = '<div class="empty" style="color:#721c24">' + escapeHtml(e.message) + '</div>';
-      scheduleLoginRefresh();
-    });
+    return requestView('loginTimes', getQuery(), function (r) { lastLoginResult = r; renderLoginTimes(); }, silent);
   }
   function renderLoginTimes() {
     var r = lastLoginResult; if (!r) return;
     var rows = applyFilter(r.rows || [], function (n) { return (n.name || '') + ' ' + (n.mesh || ''); });
-    var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + ' · serveur v' + escapeHtml(r.pluginVersion || 'ancienne') + '</h3></div>'
+    var html = '<div class="hdr"><h3>Durée d’ouverture de session — ' + escapeHtml(r.weekLabel || '') + '</h3></div>'
              + '<div class="metric-note">Le chrono démarre à la dernière saisie Windows disponible — généralement l’appui sur <b>Entrée</b>. Lorsque le poste ne fournit pas cette information, l’heure de création de la session Windows est utilisée comme meilleur départ disponible. Le chrono s’arrête lorsque le bureau est confirmé utilisable. La source exacte reste indiquée dans l’historique.</div>';
     var globalStats = r.globalStats || {};
     var roomStats = r.roomStats || [];
@@ -595,12 +722,12 @@
           + ' · ' + (globalStats.devicesWithMeasurements || 0) + '/' + (globalStats.devicesTotal || 0) + ' postes mesurés'
           + ' · ' + (globalStats.roomsWithMeasurements || 0) + '/' + (globalStats.roomsTotal || 0) + ' salles</div></div>';
     if (roomStats.length) {
-      html += '<table class="login-room-summary"><thead><tr><th>Salle</th><th>Temps moyen</th><th>Mesures</th><th>Postes mesurés</th></tr></thead><tbody>';
+      html += '<div class="table-scroll" data-scroll-key="login-0"><table class="login-room-summary"><thead><tr><th>Salle</th><th>Temps moyen</th><th>Mesures</th><th>Postes mesurés</th></tr></thead><tbody>';
       roomStats.forEach(function (room) {
         html += '<tr><td><b>' + escapeHtml(room.name) + '</b></td><td>' + formatDurationMs(room.avgMs) + '</td>'
               + '<td>' + room.count + '</td><td>' + room.devicesWithMeasurements + ' / ' + room.devicesTotal + '</td></tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
     } else {
       html += '<div class="empty">Aucune salle Windows.</div>';
     }
@@ -608,7 +735,7 @@
     if (!rows.length) {
       html += '<div class="empty">Aucun poste Windows.</div>';
     } else {
-      html += '<table><thead><tr>'
+      html += '<div class="table-scroll" data-scroll-key="login-1"><table><thead><tr>'
             + '<th>Poste</th><th>Salle</th>'
             + '<th style="width:190px">État actuel</th>'
             + '<th style="width:130px">Dernière</th>'
@@ -634,7 +761,7 @@
               : '<span style="color:#999">En attente d’une connexion</span>'));
         var historyExpanded = !!expandedLoginHistory[n.id];
         var historyButton = n.historyCount
-          ? '<button class="login-history-btn" data-login-index="' + index + '">' + (historyExpanded ? 'Masquer' : 'Voir (' + n.historyCount + ')') + '</button>'
+          ? '<button class="login-history-btn" data-login-index="' + index + '" data-login-node="' + escapeHtml(n.id) + '" aria-expanded="' + historyExpanded + '">' + (historyExpanded ? 'Masquer' : 'Voir (' + n.historyCount + ')') + '</button>'
           : '<span style="color:#999">—</span>';
         html += '<tr><td>' + escapeHtml(n.name) + '</td>'
               + '<td>' + escapeHtml(n.mesh) + '</td>'
@@ -647,10 +774,10 @@
               + '<td>' + historyButton + '</td></tr>'
               + '<tr class="login-history-row" data-login-history="' + index + '" style="display:' + (historyExpanded ? 'table-row' : 'none') + '"><td colspan="9">' + renderLoginHistory(n) + '</td></tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
     }
     html += '<div style="margin-top:8px;font-size:11px;color:#777">Une mesure incomplète ne signifie pas que la connexion Windows a échoué : le bureau peut avoir été détecté sans que Windows fournisse son heure de départ. Elle peut aussi correspondre à une session fermée ou à un agent déconnecté avant la disponibilité confirmée du bureau. Le compte Windows associé est conservé avec la mesure.</div>';
-    $('content').innerHTML = html;
+    setContent(html);
     Array.prototype.forEach.call(document.querySelectorAll('.login-history-btn'), function (button) {
       button.onclick = function () {
         var index = button.getAttribute('data-login-index');
@@ -660,6 +787,7 @@
         var node = rows[Number(index)];
         if (node) expandedLoginHistory[node.id] = opening;
         row.style.display = opening ? 'table-row' : 'none';
+        button.setAttribute('aria-expanded', String(opening));
         button.textContent = opening ? 'Masquer' : 'Voir (' + ((rows[Number(index)] || {}).historyCount || 0) + ')';
       };
     });
@@ -669,7 +797,7 @@
     var history = node.history || [];
     if (!history.length) return '<div style="color:#999">Aucune tentative sur la période sélectionnée.</div>';
     var html = '<div style="font-weight:bold;margin-bottom:5px">Historique — ' + escapeHtml(node.name) + '</div>'
-             + '<table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Utilisateur</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
+             + '<div class="table-scroll" data-scroll-key="history-' + escapeHtml(node.id) + '"><table><thead><tr><th>Début Windows</th><th>Fin / bureau</th><th>Durée</th><th>Utilisateur</th><th>Résultat</th><th>Source</th></tr></thead><tbody>';
     history.forEach(function (e) {
       var reliable = !!e.startReliable;
       var duration = (e.status === 'start-unavailable' || e.status === 'clock-skew' || !reliable) ? '—' : formatDurationMs(e.durationMs);
@@ -680,7 +808,7 @@
             + '<td>' + (e.status === 'pending' ? '<span class="login-pending">En cours</span>' : formatDateTimeMs(e.endAt)) + '</td>'
             + '<td>' + duration + '</td><td>' + escapeHtml(e.username || '—') + '</td><td>' + result + '</td><td>' + escapeHtml(loginSourceLabel(e.source)) + '</td></tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     if (node.historyTruncated) html += '<div style="font-size:10px;color:#777">Affichage limité aux 200 tentatives les plus récentes.</div>';
     return html;
   }
@@ -688,24 +816,39 @@
   // ====== Tabs ======
   function setActiveTab() {
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
-      t.classList.toggle('active', t.getAttribute('data-tab') === currentTab);
+      var name = t.getAttribute('data-tab'), active = name === currentTab;
+      t.classList.toggle('active', active); t.setAttribute('aria-selected', String(active)); t.tabIndex = active ? 0 : -1;
+      t.disabled = !isWeekMode() && ['heatmap','horsHeures','topPostes'].indexOf(name) >= 0;
+      t.title = t.disabled ? 'Disponible en mode Semaine précise' : '';
     });
+    $('content').setAttribute('aria-labelledby', 'tab-' + currentTab);
+    $('filterInput').disabled = currentTab === 'heatmap';
+    $('forceBtn').disabled = !!activeRequest || !isWeekMode() || currentTab === 'loginTimes';
   }
   function loadCurrentTab(force) {
-    if (currentTab !== 'loginTimes' && loginRefreshTimer) { clearTimeout(loginRefreshTimer); loginRefreshTimer = null; }
-    if (currentTab === 'salles') loadSalles(force);
-    else if (currentTab === 'heatmap') loadHeatmap();
-    else if (currentTab === 'horsHeures') loadHorsHeures();
-    else if (currentTab === 'topPostes') loadTopPostes();
-    else if (currentTab === 'loginTimes') loadLoginTimes(false);
+    if (currentTab === 'salles') return inDetail ? loadSalleDetail(detailMeshid, force) : loadSalles(force);
+    if (currentTab === 'heatmap') return loadHeatmap(force);
+    if (currentTab === 'horsHeures') return loadHorsHeures(force);
+    if (currentTab === 'topPostes') return loadTopPostes(force);
+    return loadLoginTimes(false);
   }
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
-    t.onclick = function () { currentTab = t.getAttribute('data-tab'); loadCurrentTab(false); };
+    t.onclick = function () { if (t.disabled) return; currentTab = t.getAttribute('data-tab'); inDetail = false; detailMeshid = null; return loadCurrentTab(false); };
+    t.onkeydown = function (event) {
+      var tabs = Array.prototype.filter.call(document.querySelectorAll('.tab'), function (tab) { return !tab.disabled; });
+      var i = tabs.indexOf(t), target;
+      if (event.key === 'ArrowRight') target = tabs[(i + 1) % tabs.length];
+      if (event.key === 'ArrowLeft') target = tabs[(i + tabs.length - 1) % tabs.length];
+      if (event.key === 'Home') target = tabs[0]; if (event.key === 'End') target = tabs[tabs.length - 1];
+      if (target) { event.preventDefault(); target.focus(); target.click(); }
+    };
   });
 
   // ====== Mode UI ======
   function updateModeUi() {
     var m = $('modeSel').value;
+    if (m !== 'week' && ['heatmap','horsHeures','topPostes'].indexOf(currentTab) >= 0) { currentTab = 'salles'; inDetail = false; detailMeshid = null; }
+    setActiveTab();
     $('weekWrap').style.display = (m === 'week') ? '' : 'none';
     $('rollingWrap').style.display = (m === 'rolling') ? '' : 'none';
     $('customWrap').style.display = (m === 'custom') ? '' : 'none';
@@ -731,8 +874,10 @@
   $('customTo').onchange = function () { loadCurrentTab(false); };
   $('schoolHours').onchange = function () { loadCurrentTab(false); };
   $('filterInput').oninput = function () {
+    if (displayedKey !== currentViewKey()) return;
     if (currentTab === 'salles') { inDetail ? renderSalleDetail() : renderSalles(); }
-    else if (currentTab === 'horsHeures') loadHorsHeures();
+    else if (currentTab === 'horsHeures' && lastHorsResult) renderHorsHeures(lastHorsResult);
+    else if (currentTab === 'topPostes' && lastTopResult) renderTopPostes(lastTopResult);
     else if (currentTab === 'loginTimes') renderLoginTimes();
   };
 
@@ -791,7 +936,7 @@
     }).catch(function (e) {
       alert('Erreur génération PDF: ' + e.message);
     }).then(function () {
-      btn.disabled = false; btn.textContent = '📄 Rapport PDF';
+      btn.disabled = false; btn.textContent = 'Rapport PDF';
     });
   }
 

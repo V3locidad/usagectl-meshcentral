@@ -216,7 +216,7 @@ test('calcule l occupation sur les sessions et conserve l allumage séparément'
     plugin.handleAdminReq({ query: { action: 'loginTimes', weekStart: '2026-08-31' } }, loginResponse.res, {});
     const loginBody = JSON.parse((await loginResponse.done).body);
     assert.equal(loginBody.timeout, null);
-    assert.equal(loginBody.pluginVersion, '0.0.53');
+    assert.equal(loginBody.pluginVersion, '0.0.54');
     assert.equal(loginBody.measuredFrom, 'windows-last-input-or-interactive-logon');
     assert.equal(loginBody.rows[0].count, 1);
     assert.equal(loginBody.rows[0].lastMs, 20 * 60 * 1000);

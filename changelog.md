@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.54 — 2026-10-13
+
+- Présentation harmonisée : filtres de période regroupés, onglets accessibles au clavier, synthèse des salles et tableaux défilants sur petits écrans.
+- Chargement automatique des statistiques à l’ouverture du module.
+- Les réponses tardives sont ignorées après un changement d’onglet, de période ou de salle.
+- Actualisation conservant les dernières données en cas d’erreur, le défilement et les historiques de connexion ouverts.
+- Les requêtes simultanées identiques sont regroupées ; les changements de recherche hors horaires et dans le classement filtrent les données déjà chargées.
+- Le bouton Recalculer fonctionne dans les vues hebdomadaires ; l’actualisation du détail d’une salle conserve cette salle.
+- Validation des dates personnalisées et désactivation des vues réservées aux semaines en mode glissant ou personnalisé.
+- Versions du manifeste, du serveur et du package alignées ; calculs, collecte et historiques conservés.
+
 ## 0.0.53
 
 - Lorsque `WTS LogonTime` est le seul départ fourni par MeshAgent, le plugin consulte maintenant aussi le journal de sécurité Windows et privilégie l’événement 4624 s’il est antérieur.

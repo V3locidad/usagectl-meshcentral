@@ -2,6 +2,16 @@
 
 Plugin d'administration MeshCentral qui mesure l'occupation réelle des postes par salle.
 
+## Interface 0.0.54
+
+Les statistiques se chargent dès l’ouverture. La barre de filtres regroupe les semaines, périodes glissantes et dates personnalisées. Les onglets **Occupation horaire**, **Hors horaires** et **Classement des postes** sont disponibles en mode semaine ; **Salles** et **Temps de connexion** prennent aussi en charge les autres périodes.
+
+La synthèse Salles indique les salles affichées, leurs postes et ceux avec une présence mesurée. La recherche filtre la vue courante. Ouvrir une salle affiche ses postes ; Rafraîchir conserve ce détail, et Retour restaure la recherche dans les salles. Le classement recherche uniquement parmi les dix plus et les dix moins utilisés déjà calculés.
+
+Le suivi des connexions s’actualise toutes les 15 secondes, en conservant les historiques ouverts et le défilement. Les réponses d’une ancienne vue sont ignorées ; une erreur d’actualisation conserve les dernières données de la même période et signale l’échec. **Recalculer** ignore le cache pour la vue hebdomadaire sélectionnée.
+
+La version 0.0.54 modifie l’affichage et la gestion des requêtes de l’interface. Elle ne réinitialise pas les mesures et conserve les règles de calcul décrites ci-dessous.
+
 ## Définition du taux
 
 Un poste est considéré comme **occupé** dès qu'au moins une session utilisateur OS est ouverte. Il redevient libre quand la dernière session se ferme/se déconnecte, ou dès que le PC s'éteint et que l'agent MeshCentral se déconnecte. Pour une salle :

@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PLUGIN_VERSION = '0.0.53';
+const PLUGIN_VERSION = '0.0.54';
 const CACHE_VERSION = 5;
 const CACHE_FILE = path.join(__dirname, 'usagectl-cache.json');
 const PRESENCE_VERSION = 1;
